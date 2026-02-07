@@ -44,22 +44,50 @@ impl SharedWhisperAdapter {
         .map_err(|e| SttError::ModelLoadError(format!("model path task failed: {e}")))??;
 
         let model_path_for_ctx = model_path.clone();
+        let (prefer_gpu, preferred_backend) = preferred_backend();
         let context = tokio::task::spawn_blocking(move || {
-            WhisperContext::new_with_params(
-                model_path_for_ctx.to_str().ok_or_else(|| {
-                    SttError::ModelLoadError(format!(
-                        "non-utf8 model path: {}",
-                        model_path_for_ctx.display()
-                    ))
-                })?,
-                WhisperContextParameters::default(),
-            )
-            .map_err(|e| {
+            let model_path_str = model_path_for_ctx.to_str().ok_or_else(|| {
                 SttError::ModelLoadError(format!(
-                    "failed to load whisper model from {}: {e}",
+                    "non-utf8 model path: {}",
                     model_path_for_ctx.display()
                 ))
-            })
+            })?;
+
+            let mut params = WhisperContextParameters::default();
+            params.use_gpu(prefer_gpu);
+            match WhisperContext::new_with_params(model_path_str, params) {
+                Ok(ctx) => {
+                    info!(
+                        "whisper context initialized with backend={} (gpu_requested={})",
+                        preferred_backend,
+                        prefer_gpu
+                    );
+                    Ok(ctx)
+                }
+                Err(gpu_err) if prefer_gpu => {
+                    warn!(
+                        "failed to initialize whisper with backend={}; retrying on CPU: {}",
+                        preferred_backend,
+                        gpu_err
+                    );
+
+                    let mut cpu_params = WhisperContextParameters::default();
+                    cpu_params.use_gpu(false);
+                    WhisperContext::new_with_params(model_path_str, cpu_params).map_err(|cpu_err| {
+                        SttError::ModelLoadError(format!(
+                            "failed to load whisper model from {} with GPU ({}) and CPU fallback ({}): {}",
+                            model_path_for_ctx.display(),
+                            preferred_backend,
+                            preferred_backend,
+                            cpu_err
+                        ))
+                    })
+                }
+                Err(err) => Err(SttError::ModelLoadError(format!(
+                    "failed to load whisper model from {}: {err}",
+                    model_path_for_ctx.display()
+                ))),
+            }
         })
         .await
         .map_err(|e| SttError::ModelLoadError(format!("context task failed: {e}")))??;
@@ -164,6 +192,27 @@ impl SharedWhisperAdapter {
             .config
             .as_ref()
             .map(|cfg| cfg.model_name.clone())
+    }
+}
+
+fn preferred_backend() -> (bool, &'static str) {
+    #[cfg(target_os = "macos")]
+    {
+        let is_apple_silicon = std::env::consts::ARCH == "aarch64";
+        if is_apple_silicon {
+            return (true, "metal");
+        }
+        return (false, "cpu");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return (true, "vulkan");
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        (false, "cpu")
     }
 }
 

@@ -13,11 +13,14 @@ async-trait = "0.1"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
-
-# Platform-specific dependencies
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-whisper-rs = "0.15"
 ureq = { version = "2.10", default-features = true }
+whisper-rs = "0.15"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.15", features = ["metal"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+whisper-rs = { version = "0.15", features = ["vulkan"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
