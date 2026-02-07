@@ -12,7 +12,7 @@ fn main() {
         let mut shortcut_manager = handle.global_shortcut_manager();
         // Register and send event to frontend when triggered
         let h = handle.clone();
-        shortcut_manager.register("CmdOrControl+Shift+Space", move || {
+        shortcut_manager.register("Ctrl+Space", move || {
           let _ = h.emit_all("global-shortcut-pressed", "");
         });
       }

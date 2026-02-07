@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "1.4", features = ["global-shortcut"] }
+tauri = { version = "1.4", features = [ "shell-open", "global-shortcut"] }
