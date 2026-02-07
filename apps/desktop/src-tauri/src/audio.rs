@@ -4,6 +4,9 @@ use cpal::{Device, Host, Stream, StreamConfig};
 use enigo::{Enigo, Key, KeyboardControllable};
 use serde::Serialize;
 use std::borrow::Cow;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -213,6 +216,144 @@ fn select_input_device(host: &Host) -> Result<Device, String> {
     Err("No input device available".to_string())
 }
 
+fn ffmpeg_binary_candidates() -> &'static [&'static str] {
+    #[cfg(target_os = "windows")]
+    {
+        return &["ffmpeg.exe", "ffmpeg-x86_64-pc-windows-msvc.exe", "ffmpeg"];
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        &["ffmpeg", "ffmpeg-aarch64-apple-darwin"]
+    }
+}
+
+fn resolve_ffmpeg_binary() -> Option<String> {
+    if let Ok(custom) = std::env::var("OPENWISPR_FFMPEG_BIN") {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    ffmpeg_binary_candidates()
+        .iter()
+        .find_map(|candidate| {
+            Command::new(candidate)
+                .arg("-version")
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|_| (*candidate).to_string())
+        })
+}
+
+fn ffmpeg_normalize_args(input: &Path, output: &Path) -> Vec<String> {
+    vec![
+        "-y".to_string(),
+        "-loglevel".to_string(),
+        "error".to_string(),
+        "-hide_banner".to_string(),
+        "-i".to_string(),
+        input.to_string_lossy().to_string(),
+        "-ac".to_string(),
+        "1".to_string(),
+        "-ar".to_string(),
+        "16000".to_string(),
+        "-sample_fmt".to_string(),
+        "s16".to_string(),
+        output.to_string_lossy().to_string(),
+    ]
+}
+
+fn write_wav_from_f32(path: &Path, samples: &[f32], format: &SttAudioFormat) -> Result<(), String> {
+    let spec = hound::WavSpec {
+        channels: format.channels.max(1),
+        sample_rate: format.sample_rate.max(1),
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer =
+        hound::WavWriter::create(path, spec).map_err(|e| format!("Failed to create wav: {}", e))?;
+
+    for sample in samples {
+        let scaled = (sample * i16::MAX as f32).clamp(i16::MIN as f32, i16::MAX as f32);
+        writer
+            .write_sample(scaled as i16)
+            .map_err(|e| format!("Failed to write wav sample: {}", e))?;
+    }
+    writer
+        .finalize()
+        .map_err(|e| format!("Failed to finalize wav: {}", e))?;
+    Ok(())
+}
+
+fn read_wav_to_f32(path: &Path) -> Result<Vec<f32>, String> {
+    let mut reader =
+        hound::WavReader::open(path).map_err(|e| format!("Failed to open wav: {}", e))?;
+    let spec = reader.spec();
+    if spec.sample_format != hound::SampleFormat::Int || spec.bits_per_sample != 16 {
+        return Err(format!(
+            "Unexpected normalized wav format: {:?} {}-bit",
+            spec.sample_format, spec.bits_per_sample
+        ));
+    }
+    let samples = reader
+        .samples::<i16>()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to read normalized wav samples: {}", e))?;
+    Ok(samples
+        .into_iter()
+        .map(|s| s as f32 / i16::MAX as f32)
+        .collect())
+}
+
+fn normalize_audio_for_stt_with_ffmpeg(
+    audio_data: &[f32],
+    format: &SttAudioFormat,
+) -> Result<(Vec<f32>, SttAudioFormat), String> {
+    let ffmpeg = resolve_ffmpeg_binary().ok_or_else(|| "ffmpeg binary not found".to_string())?;
+
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Clock error: {}", e))?
+        .as_millis();
+    let pid = std::process::id();
+    let temp_dir = std::env::temp_dir().join("openwispr");
+    fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    let input_path = temp_dir.join(format!("raw_{pid}_{millis}.wav"));
+    let output_path = temp_dir.join(format!("normalized_{pid}_{millis}.wav"));
+
+    write_wav_from_f32(&input_path, audio_data, format)?;
+
+    let args = ffmpeg_normalize_args(&input_path, &output_path);
+    let status = Command::new(&ffmpeg)
+        .args(&args)
+        .status()
+        .map_err(|e| format!("Failed to spawn ffmpeg '{}': {}", ffmpeg, e))?;
+
+    if !status.success() {
+        let _ = fs::remove_file(&input_path);
+        let _ = fs::remove_file(&output_path);
+        return Err(format!(
+            "ffmpeg normalization failed with status {:?}",
+            status.code()
+        ));
+    }
+
+    let normalized_samples = read_wav_to_f32(&output_path)?;
+    let _ = fs::remove_file(&input_path);
+    let _ = fs::remove_file(&output_path);
+
+    Ok((
+        normalized_samples,
+        SttAudioFormat {
+            sample_rate: 16_000,
+            channels: 1,
+            bits_per_sample: 16,
+        },
+    ))
+}
+
 pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Result<(), String> {
     let mut stream_lock = capture.stream.lock().unwrap();
     if stream_lock.stream.is_some() {
@@ -398,6 +539,21 @@ pub async fn stop_recording_for_capture(
         .as_deref()
         .unwrap_or("unknown")
         .to_string();
+    let (audio_data, format) = match normalize_audio_for_stt_with_ffmpeg(&audio_data, &format) {
+        Ok((samples, normalized_format)) => {
+            println!(
+                "[stt] ffmpeg normalization applied samples={} sample_rate={} channels={}",
+                samples.len(),
+                normalized_format.sample_rate,
+                normalized_format.channels
+            );
+            (samples, normalized_format)
+        }
+        Err(err) => {
+            eprintln!("[stt] ffmpeg normalization unavailable, using raw capture: {}", err);
+            (audio_data, format)
+        }
+    };
     println!(
         "[stt] transcription started model={} samples={} duration_s={:.2} sample_rate={} channels={}",
         model_name,
@@ -462,4 +618,21 @@ pub async fn stop_recording(
     app: AppHandle,
 ) -> Result<(), String> {
     stop_recording_for_capture(state.inner().clone(), app).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ffmpeg_normalize_args;
+    use std::path::Path;
+
+    #[test]
+    fn ffmpeg_normalize_args_target_whisper_contract() {
+        let args = ffmpeg_normalize_args(Path::new("in.wav"), Path::new("out.wav"));
+        assert!(args.iter().any(|arg| arg == "-ac"));
+        assert!(args.iter().any(|arg| arg == "1"));
+        assert!(args.iter().any(|arg| arg == "-ar"));
+        assert!(args.iter().any(|arg| arg == "16000"));
+        assert!(args.iter().any(|arg| arg == "-sample_fmt"));
+        assert!(args.iter().any(|arg| arg == "s16"));
+    }
 }
