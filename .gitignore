@@ -1,0 +1,57 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+dist/
+build/
+.vite/
+
+# pnpm store (optional)
+/.pnpm-store/
+
+# Rust / Cargo
+/target/
+**/target/
+Cargo.lock
+
+# Tauri
+/src-tauri/target/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Env files
+.env
+.env.*
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# Editor backups
+*~
+# Swap files
+.swp
+
+# Model weights and caches (do NOT commit large model files)
+models/
+*.pt
+*.bin
+*.onnx
+*.gguf
+
+# Build artifacts
+/apps/desktop/dist/
