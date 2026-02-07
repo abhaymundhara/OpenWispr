@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api";
 
 const FloatingPill = ({ isActive }: { isActive: boolean }) => {
   const [audioLevel, setAudioLevel] = useState(0);
@@ -7,15 +9,22 @@ const FloatingPill = ({ isActive }: { isActive: boolean }) => {
   useEffect(() => {
     if (!isActive) {
       setAudioLevel(0);
+      invoke("stop_recording").catch(console.error);
       return;
     }
 
-    // Simulate audio level changes (replace with real audio input later)
-    const interval = setInterval(() => {
-      setAudioLevel(Math.random() * 100);
-    }, 100);
+    // Start audio recording
+    invoke("start_recording").catch(console.error);
 
-    return () => clearInterval(interval);
+    // Listen for audio level events
+    const unlisten = listen<number>("audio-level", (event) => {
+      setAudioLevel(event.payload);
+    });
+
+    return () => {
+      invoke("stop_recording").catch(console.error);
+      unlisten.then((fn) => fn());
+    };
   }, [isActive]);
 
   return (
