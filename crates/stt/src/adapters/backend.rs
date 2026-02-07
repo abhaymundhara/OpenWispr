@@ -101,6 +101,22 @@ impl SharedWhisperAdapter {
             ));
         }
 
+        let raw_stats = signal_stats(audio_data);
+        let prepared_stats = signal_stats(&prepared_audio);
+        println!(
+            "[stt] signal raw: samples={} peak={:.5} rms={:.5} zcr={:.5}",
+            audio_data.len(),
+            raw_stats.peak,
+            raw_stats.rms,
+            raw_stats.zero_crossing_rate
+        );
+        println!(
+            "[stt] signal prepared: samples={} peak={:.5} rms={:.5} zcr={:.5}",
+            prepared_audio.len(),
+            prepared_stats.peak,
+            prepared_stats.rms,
+            prepared_stats.zero_crossing_rate
+        );
         debug!(
             "{} transcription started (raw_samples={}, prepared_samples={})",
             self.runtime_name,
@@ -234,6 +250,8 @@ fn decode_once(
             params.set_no_context(true);
             params.set_max_initial_ts(3.0);
             params.set_suppress_blank(false);
+            params.set_no_speech_thold(1.0);
+            params.set_logprob_thold(-99.0);
         }
         DecodeProfile::RelaxedFallback => {
             // Recover text from short clips with leading silence.
@@ -242,7 +260,8 @@ fn decode_once(
             params.set_no_context(false);
             params.set_max_initial_ts(8.0);
             params.set_suppress_blank(false);
-            params.set_no_speech_thold(0.15);
+            params.set_no_speech_thold(1.0);
+            params.set_logprob_thold(-99.0);
         }
     }
 
@@ -556,6 +575,41 @@ fn trim_silence(samples: Vec<f32>) -> Vec<f32> {
     samples[start..end].to_vec()
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct SignalStats {
+    peak: f32,
+    rms: f32,
+    zero_crossing_rate: f32,
+}
+
+fn signal_stats(samples: &[f32]) -> SignalStats {
+    if samples.is_empty() {
+        return SignalStats::default();
+    }
+
+    let peak = samples
+        .iter()
+        .map(|s| s.abs())
+        .fold(0.0_f32, |acc, v| acc.max(v));
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+
+    let mut crossings = 0usize;
+    for pair in samples.windows(2) {
+        let a = pair[0];
+        let b = pair[1];
+        if (a >= 0.0 && b < 0.0) || (a < 0.0 && b >= 0.0) {
+            crossings += 1;
+        }
+    }
+    let zcr = crossings as f32 / samples.len() as f32;
+
+    SignalStats {
+        peak,
+        rms,
+        zero_crossing_rate: zcr,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,5 +681,14 @@ mod tests {
         let out = trim_silence(input.clone());
         assert!(out.len() < input.len());
         assert!(out.iter().any(|s| s.abs() > 0.1));
+    }
+
+    #[test]
+    fn signal_stats_reports_peak_and_rms() {
+        let input = vec![0.5, -0.5, 0.5, -0.5];
+        let stats = signal_stats(&input);
+        assert!((stats.peak - 0.5).abs() < 0.0001);
+        assert!((stats.rms - 0.5).abs() < 0.0001);
+        assert!(stats.zero_crossing_rate > 0.0);
     }
 }

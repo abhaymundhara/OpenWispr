@@ -1,6 +1,6 @@
 use arboard::{Clipboard, ImageData};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Stream, StreamConfig};
+use cpal::{Device, Host, Stream, StreamConfig};
 use enigo::{Enigo, Key, KeyboardControllable};
 use serde::Serialize;
 use std::borrow::Cow;
@@ -178,6 +178,41 @@ fn calculate_rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
+fn select_input_device(host: &Host) -> Result<Device, String> {
+    if let Ok(requested) = std::env::var("OPENWISPR_INPUT_DEVICE") {
+        let needle = requested.trim().to_lowercase();
+        if !needle.is_empty() {
+            let devices = host
+                .input_devices()
+                .map_err(|e| format!("Failed to enumerate input devices: {}", e))?;
+            for device in devices {
+                let name = device
+                    .name()
+                    .unwrap_or_else(|_| "<unknown input device>".to_string());
+                if name.to_lowercase().contains(&needle) {
+                    println!("[audio] selected input device by env override: {}", name);
+                    return Ok(device);
+                }
+            }
+            return Err(format!(
+                "No input device matching OPENWISPR_INPUT_DEVICE='{}'",
+                requested
+            ));
+        }
+    }
+
+    let default = host.default_input_device();
+    if let Some(device) = default {
+        let name = device
+            .name()
+            .unwrap_or_else(|_| "<unknown input device>".to_string());
+        println!("[audio] selected default input device: {}", name);
+        return Ok(device);
+    }
+
+    Err("No input device available".to_string())
+}
+
 pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Result<(), String> {
     let mut stream_lock = capture.stream.lock().unwrap();
     if stream_lock.stream.is_some() {
@@ -187,15 +222,19 @@ pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Re
     // Get the default audio host
     let host = cpal::default_host();
 
-    // Get the default input device
-    let device = host
-        .default_input_device()
-        .ok_or("No input device available")?;
+    // Get the selected input device
+    let device = select_input_device(&host)?;
 
     // Get the default input config
     let config = device
         .default_input_config()
         .map_err(|e| format!("Failed to get input config: {}", e))?;
+    println!(
+        "[audio] input format sample_rate={} channels={} sample_format={:?}",
+        config.sample_rate().0,
+        config.channels(),
+        config.sample_format()
+    );
 
     // Reset buffered samples and capture format for the next transcription run.
     {
