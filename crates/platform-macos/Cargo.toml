@@ -1,0 +1,8 @@
+[package]
+name = "platform-macos"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "platform_macos"
+path = "src/lib.rs"
