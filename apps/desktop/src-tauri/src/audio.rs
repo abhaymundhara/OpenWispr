@@ -319,6 +319,7 @@ pub async fn stop_recording_for_capture(
     };
 
     if audio_data.is_empty() {
+        println!("[stt] no audio captured, skipping transcription");
         emit_transcription_status(&app, "idle", None);
         if let Some(window) = app.get_window("main") {
             let _ = window.hide();
@@ -349,9 +350,45 @@ pub async fn stop_recording_for_capture(
         .as_ref()
         .ok_or_else(|| "STT adapter unavailable".to_string())?;
 
+    let audio_seconds = if format.sample_rate > 0 && format.channels > 0 {
+        audio_data.len() as f32 / format.sample_rate as f32 / format.channels as f32
+    } else {
+        0.0
+    };
+    let model_name = loaded_model_guard
+        .as_deref()
+        .unwrap_or("unknown")
+        .to_string();
+    println!(
+        "[stt] transcription started model={} samples={} duration_s={:.2} sample_rate={} channels={}",
+        model_name,
+        audio_data.len(),
+        audio_seconds,
+        format.sample_rate,
+        format.channels
+    );
+
     match adapter.transcribe(&audio_data, format).await {
         Ok(result) => {
+            let language = result
+                .language
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            let confidence = result
+                .confidence
+                .map(|value| format!("{:.3}", value))
+                .unwrap_or_else(|| "n/a".to_string());
+            println!(
+                "[stt] transcription complete model={} language={} confidence={} chars={}",
+                model_name,
+                language,
+                confidence,
+                result.text.chars().count()
+            );
+            println!("[stt] transcript: {}", result.text);
+
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
+                eprintln!("[stt] paste failed: {}", err);
                 emit_transcription_status(&app, "error", Some(err.clone()));
                 return Err(err);
             }
@@ -373,6 +410,7 @@ pub async fn stop_recording_for_capture(
         }
         Err(err) => {
             let message = err.to_string();
+            eprintln!("[stt] transcription failed: {}", message);
             emit_transcription_status(&app, "error", Some(message.clone()));
             Err(message)
         }
