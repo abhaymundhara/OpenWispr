@@ -1,5 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Stream, StreamConfig, Sample, FromSample};
+use cpal::{Device, Stream, StreamConfig};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use std::sync::Mutex;

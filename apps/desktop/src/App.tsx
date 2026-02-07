@@ -189,12 +189,16 @@ function App() {
 
   // Global hotkey listener
   React.useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenHold: (() => void) | undefined;
+    let unlistenToggle: (() => void) | undefined;
 
     const setupListener = async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
-        unlisten = await listen("global-shortcut-pressed", () => {
+        unlistenHold = await listen<boolean>("fn-hold", (event) => {
+          setIsListening(event.payload);
+        });
+        unlistenToggle = await listen("global-shortcut-pressed", () => {
           setIsListening((prev) => !prev);
         });
       } catch (e) {
@@ -212,7 +216,8 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
-      if (unlisten) unlisten();
+      if (unlistenHold) unlistenHold();
+      if (unlistenToggle) unlistenToggle();
     };
   }, []);
 
