@@ -539,11 +539,6 @@ pub async fn stop_recording_for_capture(
         .as_ref()
         .ok_or_else(|| "STT adapter unavailable".to_string())?;
 
-    let audio_seconds = if format.sample_rate > 0 && format.channels > 0 {
-        audio_data.len() as f32 / format.sample_rate as f32 / format.channels as f32
-    } else {
-        0.0
-    };
     let model_name = loaded_model_guard
         .as_deref()
         .unwrap_or("unknown")
@@ -562,6 +557,11 @@ pub async fn stop_recording_for_capture(
             eprintln!("[stt] ffmpeg normalization unavailable, using raw capture: {}", err);
             (audio_data, format)
         }
+    };
+    let audio_seconds = if format.sample_rate > 0 && format.channels > 0 {
+        audio_data.len() as f32 / format.sample_rate as f32 / format.channels as f32
+    } else {
+        0.0
     };
     println!(
         "[stt] transcription started model={} samples={} duration_s={:.2} sample_rate={} channels={}",

@@ -221,54 +221,74 @@ fn run_whisper_transcription(
     language_override: Option<String>,
     task: TranscriptionTask,
 ) -> Result<Transcription> {
-    let language_option = language_override
+    let requested_language = language_override
         .as_deref()
         .map(str::trim)
         .filter(|lang| !lang.is_empty())
         .map(str::to_string);
+    let preferred_language = requested_language
+        .clone()
+        .or_else(|| Some("en".to_string()));
 
-    let fast_attempt = decode_once(
+    let primary_attempt = decode_once(
         &context,
         &audio_data,
-        language_option.as_deref(),
+        preferred_language.as_deref(),
         &task,
-        DecodeProfile::FastDictation,
+        DecodeProfile::Primary,
     )?;
     println!(
-        "[stt] fast decode chars={} segments={}",
-        fast_attempt.text.chars().count(),
-        fast_attempt.segments.len()
+        "[stt] primary decode chars={} segments={} lang={}",
+        primary_attempt.text.chars().count(),
+        primary_attempt.segments.len(),
+        preferred_language.as_deref().unwrap_or("auto")
     );
-
-    if !fast_attempt.text.trim().is_empty() || !fast_attempt.segments.is_empty() {
-        return Ok(fast_attempt);
+    if !primary_attempt.text.trim().is_empty() || !primary_attempt.segments.is_empty() {
+        return Ok(primary_attempt);
     }
 
-    println!("[stt] fast decode empty, retrying with relaxed fallback");
-    warn!("whisper returned empty text in fast mode, retrying with relaxed profile");
-    let relaxed_attempt = decode_once(
+    if requested_language.is_none() {
+        println!("[stt] primary decode empty, retrying with auto language detection");
+        let auto_attempt = decode_once(
+            &context,
+            &audio_data,
+            None,
+            &task,
+            DecodeProfile::Primary,
+        )?;
+        println!(
+            "[stt] auto-language decode chars={} segments={}",
+            auto_attempt.text.chars().count(),
+            auto_attempt.segments.len()
+        );
+        if !auto_attempt.text.trim().is_empty() || !auto_attempt.segments.is_empty() {
+            return Ok(auto_attempt);
+        }
+    }
+
+    println!("[stt] primary decode empty, retrying with permissive fallback");
+    let permissive_attempt = decode_once(
         &context,
         &audio_data,
-        language_option.as_deref(),
+        preferred_language.as_deref(),
         &task,
-        DecodeProfile::RelaxedFallback,
+        DecodeProfile::PermissiveFallback,
     )?;
     println!(
-        "[stt] relaxed decode chars={} segments={}",
-        relaxed_attempt.text.chars().count(),
-        relaxed_attempt.segments.len()
+        "[stt] permissive decode chars={} segments={}",
+        permissive_attempt.text.chars().count(),
+        permissive_attempt.segments.len()
     );
 
-    if relaxed_attempt.text.trim().is_empty() && relaxed_attempt.segments.is_empty() {
-        warn!("whisper returned empty transcription result after fallback profile");
+    if permissive_attempt.text.trim().is_empty() && permissive_attempt.segments.is_empty() {
+        warn!("whisper returned empty transcription result after all decode attempts");
     }
-
-    Ok(relaxed_attempt)
+    Ok(permissive_attempt)
 }
 
 enum DecodeProfile {
-    FastDictation,
-    RelaxedFallback,
+    Primary,
+    PermissiveFallback,
 }
 
 fn decode_once(
@@ -282,32 +302,42 @@ fn decode_once(
         SttError::TranscriptionFailed(format!("failed to create whisper state: {e}"))
     })?;
 
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    let mut params = match profile {
+        DecodeProfile::Primary => FullParams::new(SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: -1.0,
+        }),
+        DecodeProfile::PermissiveFallback => {
+            FullParams::new(SamplingStrategy::Greedy { best_of: 1 })
+        }
+    };
     params.set_n_threads(optimal_threads());
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+    params.set_no_timestamps(false);
+    params.set_single_segment(false);
+    params.set_no_context(false);
     params.set_translate(matches!(task, TranscriptionTask::Translate));
+    params.set_temperature(0.2);
+    params.set_temperature_inc(0.2);
+    params.set_max_initial_ts(1.0);
+    params.set_entropy_thold(2.4);
+    params.set_initial_prompt("");
 
     match profile {
-        DecodeProfile::FastDictation => {
-            // Optimize for quick push-to-talk commands.
-            params.set_no_timestamps(true);
-            params.set_single_segment(true);
-            params.set_no_context(true);
-            params.set_max_initial_ts(3.0);
-            params.set_suppress_blank(false);
-            params.set_no_speech_thold(1.0);
-            params.set_logprob_thold(-99.0);
+        DecodeProfile::Primary => {
+            // Mirrors voicetypr defaults for stable dictation output.
+            params.set_suppress_blank(true);
+            params.set_suppress_nst(true);
+            params.set_no_speech_thold(0.6);
+            params.set_logprob_thold(-1.0);
         }
-        DecodeProfile::RelaxedFallback => {
-            // Recover text from short clips with leading silence.
-            params.set_no_timestamps(false);
-            params.set_single_segment(false);
-            params.set_no_context(false);
-            params.set_max_initial_ts(8.0);
+        DecodeProfile::PermissiveFallback => {
+            // Reduce filtering when the primary profile yields empty text.
             params.set_suppress_blank(false);
+            params.set_suppress_nst(false);
             params.set_no_speech_thold(1.0);
             params.set_logprob_thold(-99.0);
         }
@@ -325,9 +355,13 @@ fn decode_once(
         .full(params, audio_data)
         .map_err(|e| SttError::TranscriptionFailed(format!("whisper transcription failed: {e}")))?;
 
+    let n_segments = state.full_n_segments();
     let mut text = String::new();
     let mut segments = Vec::new();
-    for segment in state.as_iter() {
+    for i in 0..n_segments {
+        let Some(segment) = state.get_segment(i) else {
+            continue;
+        };
         let segment_text = segment
             .to_str_lossy()
             .map_err(|e| {
@@ -520,7 +554,7 @@ pub(crate) fn prepare_audio(audio_data: &[f32], format: &AudioFormat) -> Vec<f32
     };
 
     normalize_for_asr(&mut prepared);
-    trim_silence(prepared)
+    prepared
 }
 
 fn downmix_to_mono(audio_data: &[f32], channels: usize) -> Vec<f32> {
@@ -587,40 +621,6 @@ fn normalize_for_asr(samples: &mut [f32]) {
     for sample in samples.iter_mut() {
         *sample = (*sample * gain).clamp(-1.0, 1.0);
     }
-}
-
-fn trim_silence(samples: Vec<f32>) -> Vec<f32> {
-    if samples.is_empty() {
-        return samples;
-    }
-
-    let peak = samples
-        .iter()
-        .map(|s| s.abs())
-        .fold(0.0_f32, |acc, v| acc.max(v));
-    if peak <= f32::EPSILON {
-        return samples;
-    }
-
-    let threshold = (peak * 0.08).max(0.002);
-    let first = match samples.iter().position(|s| s.abs() >= threshold) {
-        Some(idx) => idx,
-        None => return samples,
-    };
-    let last = match samples.iter().rposition(|s| s.abs() >= threshold) {
-        Some(idx) => idx,
-        None => return samples,
-    };
-
-    let pad = (TARGET_SAMPLE_RATE as usize) / 8;
-    let start = first.saturating_sub(pad);
-    let end = (last + pad + 1).min(samples.len());
-
-    if start == 0 && end == samples.len() {
-        return samples;
-    }
-
-    samples[start..end].to_vec()
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -718,17 +718,6 @@ mod tests {
         // Push-to-talk clips can be quiet; preprocessing should boost them.
         assert!(max_amp > 0.1, "expected normalized output, got max_amp={max_amp}");
         assert!(max_amp <= 1.0, "normalized output should remain in range");
-    }
-
-    #[test]
-    fn trim_silence_removes_leading_and_trailing_quiet_sections() {
-        let mut input = vec![0.0; 4000];
-        input.extend_from_slice(&[0.3, -0.25, 0.2, -0.15]);
-        input.extend(vec![0.0; 4000]);
-
-        let out = trim_silence(input.clone());
-        assert!(out.len() < input.len());
-        assert!(out.iter().any(|s| s.abs() > 0.1));
     }
 
     #[test]
