@@ -2,6 +2,8 @@
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use tauri::Manager;
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
 use tauri::{RunEvent, SystemTray};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::sync::{Arc, Mutex};
@@ -22,6 +24,12 @@ fn main() {
     .system_tray(SystemTray::new())
     .setup(|app| {
       let handle = app.handle();
+
+      #[cfg(target_os = "macos")]
+      {
+        // Menu bar only (no Dock icon).
+        app.set_activation_policy(ActivationPolicy::Accessory);
+      }
       
       println!("\n==============================================");
       println!("🎙️  OpenWispr Starting...");
