@@ -26,6 +26,30 @@ fn show_models_window(app_handle: &tauri::AppHandle<Wry>) {
     }
 }
 
+pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
+    if let Some(window) = app_handle.get_window("main") {
+        if let Ok(Some(monitor)) = window.current_monitor() {
+            let monitor_pos = monitor.position();
+            let monitor_size = monitor.size();
+            let window_size = window
+                .outer_size()
+                .unwrap_or(tauri::PhysicalSize::new(400, 200));
+
+            #[cfg(target_os = "macos")]
+            let bottom_margin: i32 = 96;
+            #[cfg(target_os = "windows")]
+            let bottom_margin: i32 = 56;
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let bottom_margin: i32 = 48;
+
+            let x = monitor_pos.x + (monitor_size.width as i32 - window_size.width as i32) / 2;
+            let y = monitor_pos.y + monitor_size.height as i32 - window_size.height as i32 - bottom_margin;
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+        let _ = window.show();
+    }
+}
+
 fn main() {
     let mut tray = SystemTray::new();
     #[cfg(target_os = "macos")]
@@ -139,9 +163,18 @@ fn main() {
 
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { api, .. } => {
-            // Keep the app alive even when no windows are visible.
-            println!("[lifecycle] exit requested - preventing exit");
-            api.prevent_exit();
+            #[cfg(not(debug_assertions))]
+            {
+                // Keep the app alive even when no windows are visible.
+                println!("[lifecycle] exit requested - preventing exit");
+                api.prevent_exit();
+            }
+            #[cfg(debug_assertions)]
+            {
+                let _ = api;
+                // In dev, allow process shutdown to avoid orphaned background instances.
+                println!("[lifecycle] exit requested - allowing exit in debug");
+            }
         }
         RunEvent::WindowEvent {
             label,

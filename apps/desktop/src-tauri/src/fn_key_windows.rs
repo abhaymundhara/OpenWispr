@@ -126,9 +126,7 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
 
     if is_down {
         audio::remember_active_paste_target();
-        if let Some(window) = state.app.get_window("main") {
-            let _ = window.show();
-        }
+        crate::show_main_overlay_window(&state.app);
     }
 
     if is_down {
