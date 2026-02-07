@@ -2,7 +2,7 @@
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use tauri::Manager;
-use tauri::SystemTray;
+use tauri::{RunEvent, SystemTray};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::sync::{Arc, Mutex};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -18,7 +18,7 @@ mod fn_key_windows;
 use audio::AudioCapture;
 
 fn main() {
-  tauri::Builder::default()
+  let app = tauri::Builder::default()
     .system_tray(SystemTray::new())
     .setup(|app| {
       let handle = app.handle();
@@ -96,6 +96,13 @@ fn main() {
       audio::start_recording,
       audio::stop_recording
     ])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application");
+
+  app.run(|_app_handle, event| {
+    if let RunEvent::ExitRequested { api, .. } = event {
+      // Keep the app alive even when no windows are visible.
+      api.prevent_exit();
+    }
+  });
 }
