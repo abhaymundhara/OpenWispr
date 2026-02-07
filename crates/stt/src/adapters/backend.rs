@@ -75,9 +75,8 @@ impl SharedWhisperAdapter {
                     cpu_params.use_gpu(false);
                     WhisperContext::new_with_params(model_path_str, cpu_params).map_err(|cpu_err| {
                         SttError::ModelLoadError(format!(
-                            "failed to load whisper model from {} with GPU ({}) and CPU fallback ({}): {}",
+                            "failed to load whisper model from {} with GPU ({}) and CPU fallback (cpu): {}",
                             model_path_for_ctx.display(),
-                            preferred_backend,
                             preferred_backend,
                             cpu_err
                         ))
