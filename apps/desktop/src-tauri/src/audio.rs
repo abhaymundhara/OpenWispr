@@ -3,7 +3,12 @@ use cpal::{Device, Stream, StreamConfig};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use stt::{create_adapter, AudioFormat as SttAudioFormat, SttConfig};
+use arboard::{Clipboard, ImageData};
+use enigo::{Enigo, Key, KeyboardControllable};
 use std::sync::{Arc, Mutex};
+use std::borrow::Cow;
+use std::thread;
+use std::time::Duration;
 
 // Simple wrapper to make Stream thread-safe
 struct AudioStream {
@@ -51,6 +56,96 @@ fn emit_transcription_status(app: &AppHandle, status: &str, error: Option<String
             error,
         },
     );
+}
+
+enum ClipboardSnapshot {
+    Text(String),
+    Image {
+        width: usize,
+        height: usize,
+        bytes: Vec<u8>,
+    },
+    OpaqueOrEmpty,
+}
+
+fn capture_clipboard(clipboard: &mut Clipboard) -> ClipboardSnapshot {
+    if let Ok(text) = clipboard.get_text() {
+        return ClipboardSnapshot::Text(text);
+    }
+
+    if let Ok(image) = clipboard.get_image() {
+        return ClipboardSnapshot::Image {
+            width: image.width,
+            height: image.height,
+            bytes: image.bytes.as_ref().to_vec(),
+        };
+    }
+
+    ClipboardSnapshot::OpaqueOrEmpty
+}
+
+fn restore_clipboard(clipboard: &mut Clipboard, snapshot: ClipboardSnapshot) {
+    match snapshot {
+        ClipboardSnapshot::Text(text) => {
+            let _ = clipboard.set_text(text);
+        }
+        ClipboardSnapshot::Image { width, height, bytes } => {
+            let _ = clipboard.set_image(ImageData {
+                width,
+                height,
+                bytes: Cow::Owned(bytes),
+            });
+        }
+        ClipboardSnapshot::OpaqueOrEmpty => {}
+    }
+}
+
+fn trigger_paste_shortcut() {
+    let mut enigo = Enigo::new();
+    #[cfg(target_os = "macos")]
+    {
+        enigo.key_down(Key::Meta);
+        enigo.key_click(Key::Layout('v'));
+        enigo.key_up(Key::Meta);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        enigo.key_down(Key::Control);
+        enigo.key_click(Key::Layout('v'));
+        enigo.key_up(Key::Control);
+    }
+}
+
+fn insert_text_directly(text: &str) {
+    let mut enigo = Enigo::new();
+    enigo.key_sequence(text);
+}
+
+fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+
+    let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
+    let snapshot = capture_clipboard(&mut clipboard);
+
+    if let ClipboardSnapshot::OpaqueOrEmpty = snapshot {
+        insert_text_directly(text);
+        return Ok(());
+    }
+
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|e| format!("Failed to set clipboard text: {}", e))?;
+
+    // Let clipboard managers receive the new value before pasting.
+    thread::sleep(Duration::from_millis(35));
+    trigger_paste_shortcut();
+    // Let target app consume Cmd/Ctrl+V before restoring clipboard.
+    thread::sleep(Duration::from_millis(110));
+    restore_clipboard(&mut clipboard, snapshot);
+
+    Ok(())
 }
 
 fn calculate_rms(samples: &[f32]) -> f32 {
@@ -200,6 +295,9 @@ pub async fn stop_recording(
 
     if audio_data.is_empty() {
         emit_transcription_status(&app, "idle", None);
+        if let Some(window) = app.get_window("main") {
+            let _ = window.hide();
+        }
         return Ok(());
     }
 
@@ -215,6 +313,11 @@ pub async fn stop_recording(
 
     match adapter.transcribe(&audio_data, format).await {
         Ok(result) => {
+            if let Err(err) = paste_text_preserving_clipboard(&result.text) {
+                emit_transcription_status(&app, "error", Some(err.clone()));
+                return Err(err);
+            }
+
             let _ = app.emit_all(
                 "transcription-result",
                 TranscriptionResultEvent {
@@ -225,6 +328,9 @@ pub async fn stop_recording(
                 },
             );
             emit_transcription_status(&app, "idle", None);
+            if let Some(window) = app.get_window("main") {
+                let _ = window.hide();
+            }
             Ok(())
         }
         Err(err) => {

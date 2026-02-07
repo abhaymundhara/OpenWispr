@@ -123,9 +123,6 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
     if let Some(window) = state.app.get_window("main") {
         if is_down {
             let _ = window.show();
-            let _ = window.set_focus();
-        } else {
-            let _ = window.hide();
         }
     }
 }
