@@ -135,17 +135,22 @@ fn main() {
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { api, .. } => {
             // Keep the app alive even when no windows are visible.
+            println!("[lifecycle] exit requested - preventing exit");
             api.prevent_exit();
         }
         RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
-        } if label == "models" => {
+        } if label == "models" || label == "main" => {
+            println!("[lifecycle] close requested for window '{}' - hiding", label);
             api.prevent_close();
-            if let Some(window) = app_handle.get_window("models") {
+            if let Some(window) = app_handle.get_window(&label) {
                 let _ = window.hide();
             }
+        }
+        RunEvent::Exit => {
+            println!("[lifecycle] run loop exiting");
         }
         _ => {}
     });
