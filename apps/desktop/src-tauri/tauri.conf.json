@@ -64,6 +64,7 @@
     },
     "windows": [
       {
+        "label": "main",
         "fullscreen": false,
         "resizable": false,
         "title": "OpenWispr",
@@ -74,6 +75,20 @@
         "decorations": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
+        "visible": false
+      },
+      {
+        "label": "models",
+        "fullscreen": false,
+        "resizable": true,
+        "title": "OpenWispr Models",
+        "width": 720,
+        "height": 540,
+        "center": true,
+        "transparent": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
         "visible": false
       }
     ]

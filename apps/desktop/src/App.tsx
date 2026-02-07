@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api";
-import { ArrowRight, Check, Mic } from "lucide-react";
 
 type TranscriptionStatus = "idle" | "listening" | "processing" | "error";
 
@@ -10,6 +9,28 @@ type TranscriptionStatusEvent = {
   status: TranscriptionStatus;
   error?: string;
 };
+
+type ModelInfo = {
+  name: string;
+  downloaded: boolean;
+};
+
+const MODEL_SIZE_HINTS: Record<string, string> = {
+  "tiny": "~75 MB",
+  "tiny.en": "~75 MB",
+  "base": "~140 MB",
+  "base.en": "~140 MB",
+  "small": "~460 MB",
+  "small.en": "~460 MB",
+  "medium": "~1.5 GB",
+  "medium.en": "~1.5 GB",
+  "large-v3-turbo": "~1.6 GB",
+  "large-v3": "~3.1 GB",
+};
+
+const windowLabel =
+  (window as { __TAURI_METADATA__?: { __currentWindow?: { label?: string } } })
+    .__TAURI_METADATA__?.__currentWindow?.label ?? "main";
 
 const FloatingPill = ({
   shouldRecord,
@@ -97,115 +118,120 @@ const FloatingPill = ({
   );
 };
 
-const OnboardingStep = ({
-  title,
-  description,
-  action,
-  onNext,
-}: {
-  title: string;
-  description: string;
-  action: React.ReactNode;
-  onNext: () => void;
-}) => (
-  <motion.div
-    initial={{ x: 20, opacity: 0 }}
-    animate={{ x: 0, opacity: 1 }}
-    exit={{ x: -20, opacity: 0 }}
-    className="flex flex-col items-center text-center max-w-md mx-auto p-8 bg-zinc-900/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl"
-  >
-    <h2 className="text-2xl font-bold text-white mb-2">{title}</h2>
-    <p className="text-zinc-400 mb-8">{description}</p>
+function ModelManager() {
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>();
+  const [activeDownload, setActiveDownload] = useState<string>();
 
-    <div className="mb-8 w-full flex justify-center">{action}</div>
+  const loadModels = async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const data = await invoke<ModelInfo[]>("list_models");
+      setModels(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    <button
-      onClick={onNext}
-      className="group flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full font-medium transition-all"
-    >
-      Continue{" "}
-      <ArrowRight
-        size={16}
-        className="group-hover:translate-x-0.5 transition-transform"
-      />
-    </button>
-  </motion.div>
-);
+  useEffect(() => {
+    loadModels();
+  }, []);
 
-const Onboarding = ({ onComplete }: { onComplete: () => void }) => {
-  const [step, setStep] = useState(0);
-
-  const steps = [
-    {
-      title: "Welcome to OpenWispr",
-      description:
-        "The privacy-first voice dictation tool that works everywhere.",
-      action: (
-        <div className="w-24 h-24 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-2xl shadow-lg flex items-center justify-center">
-          <Mic size={40} className="text-white" />
-        </div>
-      ),
-    },
-    {
-      title: "Grant Permissions",
-      description:
-        "We need access to your microphone and accessibility features to type for you.",
-      action: (
-        <div className="space-y-3 w-full max-w-xs">
-          <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
-            <span className="text-white text-sm">Microphone</span>
-            <Check size={18} className="text-green-400" />
-          </div>
-          <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
-            <span className="text-white text-sm">Accessibility</span>
-            <button className="text-xs bg-white/10 hover:bg-white/20 px-2 py-1 rounded text-white transition-colors">
-              Grant
-            </button>
-          </div>
-        </div>
-      ),
-    },
-    {
-      title: "Master the Hotkey",
-      description: "Press Ctrl+Space to start dictating anywhere.",
-      action: (
-        <div className="flex gap-2 justify-center">
-          {["Ctrl", "Space"].map((k) => (
-            <div
-              key={k}
-              className="w-12 h-12 flex items-center justify-center bg-white/10 rounded-lg border-b-4 border-white/5 text-white font-bold"
-            >
-              {k}
-            </div>
-          ))}
-        </div>
-      ),
-    },
-  ];
-
-  const handleNext = () => {
-    if (step < steps.length - 1) {
-      setStep(step + 1);
-    } else {
-      onComplete();
+  const onDownload = async (model: string) => {
+    setActiveDownload(model);
+    setError(undefined);
+    try {
+      await invoke("download_model", { model });
+      await loadModels();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActiveDownload(undefined);
     }
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <AnimatePresence mode="wait">
-        <OnboardingStep key={step} {...steps[step]} onNext={handleNext} />
-      </AnimatePresence>
+    <div className="h-screen w-screen bg-zinc-950 text-zinc-100 p-6 overflow-auto">
+      <div className="mx-auto max-w-3xl">
+        <div className="flex items-end justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Model Manager</h1>
+            <p className="text-zinc-400 text-sm mt-1">
+              Download Whisper models locally. These stay on-device.
+            </p>
+          </div>
+          <button
+            className="px-3 py-1.5 text-sm rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
+            onClick={loadModels}
+            disabled={loading}
+          >
+            Refresh
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div className="rounded-xl border border-zinc-800 overflow-hidden">
+          <div className="grid grid-cols-[1.2fr_0.7fr_0.6fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/80">
+            <div>Model</div>
+            <div>Size</div>
+            <div className="text-right">Action</div>
+          </div>
+          {loading ? (
+            <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
+          ) : (
+            models.map((model) => {
+              const downloading = activeDownload === model.name;
+              return (
+                <div
+                  key={model.name}
+                  className="grid grid-cols-[1.2fr_0.7fr_0.6fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
+                >
+                  <div className="font-medium">{model.name}</div>
+                  <div className="text-zinc-400 text-sm">
+                    {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
+                  </div>
+                  <div className="text-right">
+                    <button
+                      className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
+                        model.downloaded
+                          ? "bg-emerald-500/20 text-emerald-300 cursor-default"
+                          : "bg-blue-600 hover:bg-blue-500 text-white"
+                      }`}
+                      disabled={model.downloaded || downloading}
+                      onClick={() => onDownload(model.name)}
+                    >
+                      {model.downloaded
+                        ? "Downloaded"
+                        : downloading
+                          ? "Downloading..."
+                          : "Download"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
     </div>
   );
-};
+}
 
-function App() {
+function DictationPillApp() {
   const [fnHeld, setFnHeld] = useState(false);
   const [sttStatus, setSttStatus] = useState<TranscriptionStatus>("idle");
   const [sttError, setSttError] = useState<string>();
 
-  React.useEffect(() => {
+  useEffect(() => {
     let unlistenHold: (() => void) | undefined;
     let unlistenToggle: (() => void) | undefined;
     let unlistenStatus: (() => void) | undefined;
@@ -222,10 +248,7 @@ function App() {
           "transcription-status",
           (event) => {
             setSttStatus(event.payload.status);
-            if (event.payload.status === "listening") {
-              setSttError(undefined);
-            }
-            if (event.payload.status === "idle") {
+            if (event.payload.status === "listening" || event.payload.status === "idle") {
               setSttError(undefined);
             }
             if (event.payload.error) {
@@ -274,6 +297,13 @@ function App() {
       </AnimatePresence>
     </div>
   );
+}
+
+function App() {
+  if (windowLabel === "models") {
+    return <ModelManager />;
+  }
+  return <DictationPillApp />;
 }
 
 export default App;
