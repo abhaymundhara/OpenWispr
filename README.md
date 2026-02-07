@@ -5,6 +5,8 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey.svg)](https://github.com/abhaymundhara/OpenWispr)
 <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.OpenWispr&style=for-the-badge&color=00d4ff" alt="Views">
 
+</div>
+
 OpenWispr is a privacy-first desktop dictation utility that runs locally and is built with Tauri (Rust + web UI). It provides a minimal, always-on-top floating dictation pill that captures microphone audio on-device and emits audio levels to a small React UI, while delegating transcription to a pluggable STT adapter layer.
 
 Supported (development) platforms
