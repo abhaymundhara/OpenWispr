@@ -15,5 +15,13 @@ device_query = "2.1"
 objc2-core-graphics = { version = "0.3.2", features = ["CGEvent", "CGEventTypes"] }
 objc2-core-foundation = { version = "0.3.2", features = ["CFMachPort", "CFRunLoop", "CFString"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging"
+] }
+
 [build-dependencies]
 tauri-build = { version = "1.4", features = [] }

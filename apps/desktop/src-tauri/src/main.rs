@@ -1,17 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use tauri::Manager;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::sync::{Arc, Mutex};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::time::Duration;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use device_query::{DeviceQuery, DeviceState, Keycode};
 
 mod audio;
 #[cfg(target_os = "macos")]
 mod fn_key_macos;
+#[cfg(target_os = "windows")]
+mod fn_key_windows;
 use audio::AudioCapture;
 
 fn main() {
@@ -30,7 +32,12 @@ fn main() {
         fn_key_macos::start_fn_hold_listener(handle.clone());
       }
 
-      #[cfg(not(target_os = "macos"))]
+      #[cfg(target_os = "windows")]
+      {
+        fn_key_windows::start_fn_hold_listener(handle.clone());
+      }
+
+      #[cfg(not(any(target_os = "macos", target_os = "windows")))]
       {
         let window = app.get_window("main").unwrap();
 
