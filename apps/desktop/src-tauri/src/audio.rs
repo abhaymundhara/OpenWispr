@@ -1,14 +1,15 @@
+use arboard::{Clipboard, ImageData};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamConfig};
-use serde::Serialize;
-use tauri::{AppHandle, Manager};
-use stt::{create_adapter, AudioFormat as SttAudioFormat, SttConfig};
-use arboard::{Clipboard, ImageData};
 use enigo::{Enigo, Key, KeyboardControllable};
-use std::sync::{Arc, Mutex};
+use serde::Serialize;
 use std::borrow::Cow;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use stt::{create_adapter, AudioFormat as SttAudioFormat, SttAdapter, SttConfig};
+use tauri::{AppHandle, Manager};
+use tokio::sync::Mutex as AsyncMutex;
 
 // Simple wrapper to make Stream thread-safe
 struct AudioStream {
@@ -22,6 +23,7 @@ pub struct AudioCapture {
     stream: Arc<Mutex<AudioStream>>,
     samples: Arc<Mutex<Vec<f32>>>,
     format: Arc<Mutex<SttAudioFormat>>,
+    stt_adapter: Arc<AsyncMutex<Option<Box<dyn SttAdapter>>>>,
 }
 
 impl AudioCapture {
@@ -30,6 +32,7 @@ impl AudioCapture {
             stream: Arc::new(Mutex::new(AudioStream { stream: None })),
             samples: Arc::new(Mutex::new(Vec::new())),
             format: Arc::new(Mutex::new(SttAudioFormat::default())),
+            stt_adapter: Arc::new(AsyncMutex::new(None)),
         }
     }
 }
@@ -40,6 +43,7 @@ impl Clone for AudioCapture {
             stream: self.stream.clone(),
             samples: self.samples.clone(),
             format: self.format.clone(),
+            stt_adapter: self.stt_adapter.clone(),
         }
     }
 }
@@ -99,7 +103,11 @@ fn restore_clipboard(clipboard: &mut Clipboard, snapshot: ClipboardSnapshot) {
         ClipboardSnapshot::Text(text) => {
             let _ = clipboard.set_text(text);
         }
-        ClipboardSnapshot::Image { width, height, bytes } => {
+        ClipboardSnapshot::Image {
+            width,
+            height,
+            bytes,
+        } => {
             let _ = clipboard.set_image(ImageData {
                 width,
                 height,
@@ -162,28 +170,25 @@ fn calculate_rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
-    
+
     let sum: f32 = samples.iter().map(|&s| s * s).sum();
     (sum / samples.len() as f32).sqrt()
 }
 
-pub fn start_recording_for_capture(
-    capture: &AudioCapture,
-    app: AppHandle,
-) -> Result<(), String> {
+pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Result<(), String> {
     let mut stream_lock = capture.stream.lock().unwrap();
     if stream_lock.stream.is_some() {
         return Ok(());
     }
-    
+
     // Get the default audio host
     let host = cpal::default_host();
-    
+
     // Get the default input device
     let device = host
         .default_input_device()
         .ok_or("No input device available")?;
-    
+
     // Get the default input config
     let config = device
         .default_input_config()
@@ -218,21 +223,18 @@ pub fn start_recording_for_capture(
         }
         _ => return Err("Unsupported sample format".to_string()),
     };
-    
+
     stream
         .play()
         .map_err(|e| format!("Failed to play stream: {}", e))?;
-    
+
     stream_lock.stream = Some(stream);
-    
+
     Ok(())
 }
 
 #[tauri::command]
-pub fn start_recording(
-    state: tauri::State<AudioCapture>,
-    app: AppHandle,
-) -> Result<(), String> {
+pub fn start_recording(state: tauri::State<AudioCapture>, app: AppHandle) -> Result<(), String> {
     start_recording_for_capture(state.inner(), app)
 }
 
@@ -247,40 +249,41 @@ where
     f32: cpal::FromSample<T>,
 {
     let err_fn = |err| eprintln!("Error in audio stream: {}", err);
-    
+
     let mut buffer = Vec::new();
     let chunk_size = (config.sample_rate.0 as f32 * 0.1) as usize; // 100ms chunks
-    
+
     let stream = device
         .build_input_stream(
             config,
             move |data: &[T], _: &cpal::InputCallbackInfo| {
                 // Convert samples to f32
-                let samples: Vec<f32> = data.iter().map(|&s| cpal::Sample::from_sample(s)).collect();
+                let samples: Vec<f32> =
+                    data.iter().map(|&s| cpal::Sample::from_sample(s)).collect();
                 if let Ok(mut stt_data) = stt_samples.lock() {
                     stt_data.extend_from_slice(&samples);
                 }
 
                 buffer.extend_from_slice(&samples);
-                
+
                 // Process in chunks
                 if buffer.len() >= chunk_size {
                     let rms = calculate_rms(&buffer[..chunk_size]);
-                    
+
                     // Convert RMS to dB (approximate)
                     let db = if rms > 0.0 {
                         20.0 * rms.log10()
                     } else {
                         -100.0
                     };
-                    
+
                     // Normalize to 0-100 range for UI
                     // Typical range: -60 dB (quiet) to 0 dB (loud)
                     let level = ((db + 60.0) / 60.0 * 100.0).clamp(0.0, 100.0);
-                    
+
                     // Emit audio level event
                     let _ = app.emit_all("audio-level", level);
-                    
+
                     // Clear processed samples
                     buffer.drain(..chunk_size);
                 }
@@ -289,7 +292,7 @@ where
             None,
         )
         .map_err(|e| format!("Failed to build input stream: {}", e))?;
-    
+
     Ok(stream)
 }
 
@@ -324,11 +327,18 @@ pub async fn stop_recording_for_capture(
         let format = capture.format.lock().unwrap();
         format.clone()
     };
-    let mut adapter = create_adapter().map_err(|e| e.to_string())?;
-    adapter
-        .initialize(SttConfig::default())
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut adapter_guard = capture.stt_adapter.lock().await;
+    if adapter_guard.is_none() {
+        let mut adapter = create_adapter().map_err(|e| e.to_string())?;
+        adapter
+            .initialize(SttConfig::default())
+            .await
+            .map_err(|e| e.to_string())?;
+        *adapter_guard = Some(adapter);
+    }
+    let adapter = adapter_guard
+        .as_ref()
+        .ok_or_else(|| "STT adapter unavailable".to_string())?;
 
     match adapter.transcribe(&audio_data, format).await {
         Ok(result) => {
