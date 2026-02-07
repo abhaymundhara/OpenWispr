@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use objc2_core_foundation::{CFMachPort, CFRunLoop};
+use objc2_core_foundation::{kCFRunLoopDefaultMode, CFMachPort, CFRunLoop};
 use objc2_core_graphics::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType,
@@ -89,7 +89,12 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
             return;
         };
 
-        run_loop.add_source(Some(&source), None);
+        let default_mode = unsafe { kCFRunLoopDefaultMode };
+        let Some(default_mode) = default_mode else {
+            eprintln!("Failed to get kCFRunLoopDefaultMode.");
+            return;
+        };
+        run_loop.add_source(Some(&source), Some(default_mode));
         CFRunLoop::run();
     });
 }

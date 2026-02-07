@@ -21,9 +21,15 @@ use audio::AudioCapture;
 
 fn main() {
   let app = tauri::Builder::default()
-    .system_tray(SystemTray::new())
     .setup(|app| {
       let handle = app.handle();
+
+      let mut tray = SystemTray::new();
+      #[cfg(target_os = "macos")]
+      {
+        tray = tray.with_icon_as_template(false);
+      }
+      tray.build(app)?;
 
       #[cfg(target_os = "macos")]
       {
