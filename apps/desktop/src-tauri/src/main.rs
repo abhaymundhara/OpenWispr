@@ -31,19 +31,38 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
         if let Ok(Some(monitor)) = window.current_monitor() {
             let monitor_pos = monitor.position();
             let monitor_size = monitor.size();
-            let window_size = window
+            let raw_window_size = window
                 .outer_size()
                 .unwrap_or(tauri::PhysicalSize::new(400, 200));
+            let width = if raw_window_size.width == 0 {
+                400
+            } else {
+                raw_window_size.width as i32
+            };
+            let height = if raw_window_size.height == 0 {
+                200
+            } else {
+                raw_window_size.height as i32
+            };
 
             #[cfg(target_os = "macos")]
-            let bottom_margin: i32 = 96;
+            let bottom_margin: i32 = 180;
             #[cfg(target_os = "windows")]
-            let bottom_margin: i32 = 56;
+            let bottom_margin: i32 = 180;
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let bottom_margin: i32 = 48;
 
-            let x = monitor_pos.x + (monitor_size.width as i32 - window_size.width as i32) / 2;
-            let y = monitor_pos.y + monitor_size.height as i32 - window_size.height as i32 - bottom_margin;
+            let min_x = monitor_pos.x;
+            let max_x = monitor_pos.x + monitor_size.width as i32 - width;
+            let min_y = monitor_pos.y;
+            let max_y = monitor_pos.y + monitor_size.height as i32 - height;
+
+            let center_x = monitor_pos.x + (monitor_size.width as i32 - width) / 2;
+            let bottom_y = monitor_pos.y + monitor_size.height as i32 - height - bottom_margin;
+
+            let x = center_x.clamp(min_x, max_x.max(min_x));
+            let y = bottom_y.clamp(min_y, max_y.max(min_y));
+
             let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
         }
         let _ = window.show();
