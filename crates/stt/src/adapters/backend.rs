@@ -167,6 +167,10 @@ fn run_whisper_transcription(
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+    // Push-to-talk dictation should prefer immediate text over timestamp alignment.
+    params.set_no_timestamps(true);
+    params.set_single_segment(true);
+    params.set_no_context(true);
     params.set_translate(matches!(task, TranscriptionTask::Translate));
 
     let language_option = language_override
@@ -377,11 +381,14 @@ pub(crate) fn prepare_audio(audio_data: &[f32], format: &AudioFormat) -> Vec<f32
         downmix_to_mono(audio_data, format.channels as usize)
     };
 
-    if format.sample_rate == TARGET_SAMPLE_RATE {
-        return mono;
-    }
+    let mut prepared = if format.sample_rate == TARGET_SAMPLE_RATE {
+        mono
+    } else {
+        resample_linear(&mono, format.sample_rate, TARGET_SAMPLE_RATE)
+    };
 
-    resample_linear(&mono, format.sample_rate, TARGET_SAMPLE_RATE)
+    normalize_for_asr(&mut prepared);
+    prepared
 }
 
 fn downmix_to_mono(audio_data: &[f32], channels: usize) -> Vec<f32> {
@@ -419,6 +426,35 @@ fn resample_linear(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
         out.push(a + (b - a) * frac);
     }
     out
+}
+
+fn normalize_for_asr(samples: &mut [f32]) {
+    if samples.is_empty() {
+        return;
+    }
+
+    let peak = samples
+        .iter()
+        .map(|s| s.abs())
+        .fold(0.0_f32, |acc, v| acc.max(v));
+    if peak <= f32::EPSILON {
+        return;
+    }
+
+    // Leave normal/loud captures untouched; only lift very quiet push-to-talk clips.
+    if peak >= 0.20 {
+        return;
+    }
+
+    let target_peak = 0.35_f32;
+    let gain = (target_peak / peak).clamp(1.0, 80.0);
+    if (gain - 1.0).abs() < 0.01 {
+        return;
+    }
+
+    for sample in samples.iter_mut() {
+        *sample = (*sample * gain).clamp(-1.0, 1.0);
+    }
 }
 
 #[cfg(test)]
@@ -461,5 +497,25 @@ mod tests {
         };
         let out = prepare_audio(&input, &format);
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn prepare_audio_normalizes_very_quiet_input() {
+        let input = vec![0.001, -0.0015, 0.002];
+        let format = AudioFormat {
+            sample_rate: TARGET_SAMPLE_RATE,
+            channels: 1,
+            bits_per_sample: 16,
+        };
+
+        let out = prepare_audio(&input, &format);
+        let max_amp = out
+            .iter()
+            .map(|s| s.abs())
+            .fold(0.0_f32, |acc, v| acc.max(v));
+
+        // Push-to-talk clips can be quiet; preprocessing should boost them.
+        assert!(max_amp > 0.1, "expected normalized output, got max_amp={max_amp}");
+        assert!(max_amp <= 1.0, "normalized output should remain in range");
     }
 }
