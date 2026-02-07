@@ -5,9 +5,9 @@ use enigo::{Enigo, Key, KeyboardControllable};
 use serde::Serialize;
 use std::borrow::Cow;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use stt::{create_adapter, AudioFormat as SttAudioFormat, SttAdapter, SttConfig};
@@ -228,14 +228,21 @@ fn ffmpeg_binary_candidates() -> &'static [&'static str] {
 }
 
 fn resolve_ffmpeg_binary() -> Option<String> {
+    static FFMPEG_BIN: OnceLock<Option<String>> = OnceLock::new();
+    if let Some(cached) = FFMPEG_BIN.get() {
+        return cached.clone();
+    }
+
     if let Ok(custom) = std::env::var("OPENWISPR_FFMPEG_BIN") {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
+            let resolved = Some(trimmed.to_string());
+            let _ = FFMPEG_BIN.set(resolved.clone());
+            return resolved;
         }
     }
 
-    ffmpeg_binary_candidates()
+    let resolved = ffmpeg_binary_candidates()
         .iter()
         .find_map(|candidate| {
             Command::new(candidate)
@@ -244,7 +251,9 @@ fn resolve_ffmpeg_binary() -> Option<String> {
                 .ok()
                 .filter(|output| output.status.success())
                 .map(|_| (*candidate).to_string())
-        })
+        });
+    let _ = FFMPEG_BIN.set(resolved.clone());
+    resolved
 }
 
 fn ffmpeg_normalize_args(input: &Path, output: &Path) -> Vec<String> {
