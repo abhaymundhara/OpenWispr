@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tauri = { version = "1.4", features = [ "shell-open", "global-shortcut"] }
+tauri = { version = "1.4", features = [ "macos-private-api", "shell-open", "global-shortcut"] }
+
+[build-dependencies]
+tauri-build = { version = "1.4", features = [] }

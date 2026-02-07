@@ -1,51 +1,71 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Mic,
-  Check,
-  ArrowRight,
-  Settings as SettingsIcon,
-  X,
-} from "lucide-react";
-import { clsx } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-// --- Utils ---
-function cn(...inputs: (string | undefined | null | false)[]) {
-  return twMerge(clsx(inputs));
-}
-
-// --- Components ---
 
 const FloatingPill = ({ isActive }: { isActive: boolean }) => {
+  const [audioLevel, setAudioLevel] = useState(0);
+
+  useEffect(() => {
+    if (!isActive) {
+      setAudioLevel(0);
+      return;
+    }
+
+    // Simulate audio level changes (replace with real audio input later)
+    const interval = setInterval(() => {
+      setAudioLevel(Math.random() * 100);
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isActive]);
+
   return (
     <motion.div
-      initial={{ y: 50, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      exit={{ y: 50, opacity: 0 }}
-      className="fixed bottom-12 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-3 bg-black/60 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl text-white"
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      exit={{ scale: 0.8, opacity: 0 }}
+      transition={{ type: "spring", damping: 20, stiffness: 300 }}
+      className="fixed bottom-8 left-1/2 -translate-x-1/2"
     >
-      <div className="relative flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500">
-        <Mic size={16} className="text-white z-10" />
-        {isActive && (
-          <motion.div
-            animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
-            transition={{ repeat: Infinity, duration: 2 }}
-            className="absolute inset-0 bg-indigo-500 rounded-full"
-          />
-        )}
+      <div className="relative flex items-center gap-2.5 px-4 py-2.5 bg-black/95 backdrop-blur-xl border border-white/20 rounded-full shadow-2xl">
+        {/* Stop button */}
+        <button
+          className="w-3 h-3 bg-red-500 rounded-sm hover:bg-red-400 transition-colors flex-shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            // Handle stop
+          }}
+        />
+
+        {/* Waveform bars */}
+        <div className="flex items-center gap-0.5 h-5">
+          {[...Array(10)].map((_, i) => {
+            const baseHeight = 6;
+            const maxHeight = 14;
+            const normalizedLevel = Math.min(audioLevel / 15, 1);
+            const variation = i * 0.2;
+            const time = Date.now() * 0.004;
+            const phase = i * 0.4;
+            const sineVariation = Math.sin(time + phase) * 0.6;
+            const randomVariation = (Math.random() - 0.5) * 1.0;
+
+            const height =
+              baseHeight +
+              normalizedLevel * (maxHeight - baseHeight) +
+              variation +
+              sineVariation +
+              randomVariation;
+            const finalHeight = Math.max(3, Math.min(maxHeight, height));
+
+            return (
+              <div
+                key={i}
+                className="w-0.5 bg-white/70 rounded-full transition-all duration-100"
+                style={{ height: `${finalHeight}px` }}
+              />
+            );
+          })}
+        </div>
       </div>
-
-      <div className="flex flex-col">
-        <span className="text-sm font-medium">Listening...</span>
-        <span className="text-xs text-white/50">Say "Stop" or press Esc</span>
-      </div>
-
-      <div className="h-4 w-px bg-white/20 mx-1" />
-
-      <button className="p-1.5 hover:bg-white/10 rounded-full transition-colors">
-        <SettingsIcon size={16} className="text-white/70" />
-      </button>
     </motion.div>
   );
 };
@@ -156,7 +176,6 @@ const Onboarding = ({ onComplete }: { onComplete: () => void }) => {
 // --- Main App ---
 
 function App() {
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
   // Global hotkey listener
@@ -188,21 +207,8 @@ function App() {
     };
   }, []);
 
-  if (!hasCompletedOnboarding) {
-    return <Onboarding onComplete={() => setHasCompletedOnboarding(true)} />;
-  }
-
   return (
-    <div className="h-screen w-screen flex items-center justify-center overflow-hidden">
-      {/* 
-        This is a debug overlay to help user understand hidden state
-        Remove in production
-      */}
-      <div className="fixed top-4 left-4 text-white/30 text-xs">
-        Press ` (backtick) to toggle listening <br />
-        State: {isListening ? "Listening" : "Idle"}
-      </div>
-
+    <div className="h-screen w-screen flex items-center justify-center overflow-hidden bg-transparent">
       <AnimatePresence>
         {isListening && <FloatingPill isActive={true} />}
       </AnimatePresence>

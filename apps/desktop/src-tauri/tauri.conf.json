@@ -17,6 +17,7 @@
         "open": true
       }
     },
+    "macOSPrivateApi": true,
     "bundle": {
       "active": true,
       "category": "Utility",
@@ -61,12 +62,14 @@
         "fullscreen": false,
         "resizable": false,
         "title": "OpenWispr",
-        "width": 800,
-        "height": 600,
+        "width": 400,
+        "height": 200,
         "center": true,
         "transparent": true,
         "decorations": false,
-        "alwaysOnTop": true
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ]
   }

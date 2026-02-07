@@ -1,6 +1,7 @@
 {
   "name": "openwispr-desktop",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "vite",
@@ -8,6 +9,7 @@
     "start": "vite preview"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
     "@tauri-apps/cli": "1.5.11",
     "autoprefixer": "^10.4.24",
     "postcss": "^8.5.6",
