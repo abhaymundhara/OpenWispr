@@ -16,25 +16,25 @@ stt/
 
 ## Platform Support
 
-### macOS (Apple Silicon)
+### macOS
 
-- **Engine**: MLX Whisper
-- **Optimization**: Metal GPU + Neural Engine
-- **Status**: Stub (ready for integration)
-- **Next Steps**:
-  - Integrate `mlx-whisper` Python package via PyO3
-  - Or use Swift/Objective-C bridge to MLX framework
-  - Download models to `~/.cache/openwispr/models/`
+- **Engine**: whisper.cpp via `whisper-rs`
+- **Status**: Implemented
+- **Model cache**: `~/.cache/openwispr/models/` (or `OPENWISPR_MODEL_DIR`)
+- **Behavior**:
+  - Auto-downloads `ggml-<model>.bin` when missing
+  - Accepts explicit model path through `SttConfig.model_path`
+  - Downmixes multi-channel input to mono and resamples to 16kHz before inference
 
 ### Windows
 
 - **Engine**: whisper.cpp
-- **Optimization**: CUDA (NVIDIA) or CPU
-- **Status**: Stub (ready for integration)
-- **Next Steps**:
-  - Add `whisper-rs` crate for Rust bindings
-  - Or use direct FFI to whisper.cpp library
-  - Download GGML models to `%APPDATA%/openwispr/models/`
+- **Status**: Implemented
+- **Model cache**: `%LOCALAPPDATA%\\OpenWispr\\models` (or `OPENWISPR_MODEL_DIR`)
+- **Behavior**:
+  - Auto-downloads `ggml-<model>.bin` when missing
+  - Accepts explicit model path through `SttConfig.model_path`
+  - Downmixes multi-channel input to mono and resamples to 16kHz before inference
 
 ## Usage
 
@@ -77,14 +77,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - [x] Core trait definition
 - [x] Platform detection & factory
-- [x] MLX adapter stub (macOS)
-- [x] whisper.cpp adapter stub (Windows)
-- [ ] MLX model integration
-- [ ] whisper.cpp bindings
-- [ ] Model download & caching
+- [x] Local whisper backend (macOS + Windows)
+- [x] Model download & caching
+- [x] Audio preprocessing (downmix + 16kHz resample)
+- [x] Unit tests for preprocessing/model naming
 - [ ] Real-time streaming support
-- [ ] GPU acceleration
-- [ ] Tests
+- [ ] GPU acceleration tuning
 
 ## Future Enhancements
 

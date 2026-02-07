@@ -12,16 +12,16 @@ pub mod adapters;
 pub enum SttError {
     #[error("Model not found: {0}")]
     ModelNotFound(String),
-    
+
     #[error("Transcription failed: {0}")]
     TranscriptionFailed(String),
-    
+
     #[error("Audio processing error: {0}")]
     AudioError(String),
-    
+
     #[error("Model loading error: {0}")]
     ModelLoadError(String),
-    
+
     #[error("Unsupported platform")]
     UnsupportedPlatform,
 }
@@ -40,7 +40,7 @@ impl Default for AudioFormat {
     fn default() -> Self {
         Self {
             sample_rate: 16000, // Whisper expects 16kHz
-            channels: 1,         // Mono
+            channels: 1,        // Mono
             bits_per_sample: 16,
         }
     }
@@ -93,16 +93,16 @@ impl Default for SttConfig {
 pub trait SttAdapter: Send + Sync {
     /// Initialize the adapter and load the model
     async fn initialize(&mut self, config: SttConfig) -> Result<()>;
-    
+
     /// Transcribe audio data to text
     async fn transcribe(&self, audio_data: &[f32], format: AudioFormat) -> Result<Transcription>;
-    
+
     /// Check if a model is available/downloaded
     async fn is_model_available(&self, model_name: &str) -> bool;
-    
+
     /// List available models
     fn available_models(&self) -> Vec<String>;
-    
+
     /// Get the current model name
     fn current_model(&self) -> Option<String>;
 }
@@ -113,12 +113,12 @@ pub fn create_adapter() -> Result<Box<dyn SttAdapter>> {
     {
         Ok(Box::new(adapters::mlx::MlxAdapter::new()))
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         Ok(Box::new(adapters::whisper::WhisperAdapter::new()))
     }
-    
+
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Err(SttError::UnsupportedPlatform)

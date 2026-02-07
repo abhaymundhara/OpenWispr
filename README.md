@@ -9,22 +9,23 @@
 
 OpenWispr is a privacy-first desktop dictation utility that runs locally and is built with Tauri (Rust + web UI). It provides a minimal, always-on-top floating dictation pill that captures microphone audio on-device and emits audio levels to a small React UI, while delegating transcription to a pluggable STT adapter layer.
 
-Supported (development) platforms
+Supported platforms
 
 - macOS (primary)
-- Windows (adapter work in progress)
+- Windows
 
 Project goals
 
 - Local-first transcription: prefer on-device models to preserve privacy.
 - Minimal UX: small floating waveform pill with one global hotkey for dictation.
 - Extensible STT adapters: trait-based architecture to add model backends.
+- Local whisper.cpp transcription with automatic model caching.
 
 Highlights
 
 - Small, focused UI: React + Tailwind floating pill with real-time audio level visualization.
 - Native audio capture: `cpal` in Rust for microphone capture and RMS → dB normalization.
-- Pluggable STT layer: `crates/stt` defines `SttAdapter` and adapters for platform-specific runtimes.
+- Pluggable STT layer: `crates/stt` defines `SttAdapter` and platform adapters backed by `whisper.cpp`.
 - Tauri-based: Rust backend handles system integration and emits events to the frontend.
 
 Repository layout
@@ -33,7 +34,7 @@ Repository layout
   - `src/` — React UI and event handling
   - `src-tauri/` — Rust backend: audio capture, hotkey listeners, STT integration points
   - `src-tauri/tauri.conf.json` — Tauri settings and bundle configuration
-- `crates/stt/` — STT trait and adapter stubs
+- `crates/stt/` — STT trait and platform adapters
 
 Quick start (development)
 

@@ -1,5 +1,6 @@
 /// Platform-specific STT adapter implementations
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) mod backend;
 
 #[cfg(target_os = "macos")]
