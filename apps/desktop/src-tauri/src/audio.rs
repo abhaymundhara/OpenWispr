@@ -93,23 +93,24 @@ enum ClipboardSnapshot {
 }
 
 #[cfg(target_os = "macos")]
-fn normalize_frontmost_app_name(raw: &str) -> Option<String> {
-    let candidate = raw.trim();
-    if candidate.is_empty() {
-        return None;
-    }
-
-    let lowercase = candidate.to_lowercase();
-    if lowercase.contains("openwispr") {
-        return None;
-    }
-
-    Some(candidate.to_string())
+#[derive(Clone, Debug)]
+struct MacPasteTarget {
+    pid: i32,
+    name: String,
 }
 
 #[cfg(target_os = "macos")]
-fn paste_target_slot() -> &'static Mutex<Option<String>> {
-    static SLOT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+fn parse_frontmost_pid(raw: &str) -> Option<i32> {
+    let parsed = raw.trim().parse::<i32>().ok()?;
+    if parsed <= 0 {
+        return None;
+    }
+    Some(parsed)
+}
+
+#[cfg(target_os = "macos")]
+fn paste_target_slot() -> &'static Mutex<Option<MacPasteTarget>> {
+    static SLOT: OnceLock<Mutex<Option<MacPasteTarget>>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
@@ -127,30 +128,44 @@ fn paste_target_slot() -> &'static Mutex<Option<()>> {
 
 #[cfg(target_os = "macos")]
 fn capture_active_paste_target() {
-    let output = Command::new("osascript")
+    let pid_output = Command::new("osascript")
         .arg("-e")
-        .arg("tell application \"System Events\" to get name of first application process whose frontmost is true")
+        .arg("tell application \"System Events\" to get unix id of first application process whose frontmost is true")
         .output();
-    let Ok(output) = output else {
-        eprintln!("[paste] could not query frontmost app with osascript");
+    let Ok(pid_output) = pid_output else {
+        eprintln!("[paste] could not query frontmost app pid with osascript");
         return;
     };
-    if !output.status.success() {
-        eprintln!("[paste] osascript query for frontmost app failed");
+    if !pid_output.status.success() {
+        eprintln!("[paste] osascript query for frontmost app pid failed");
         return;
     }
 
-    let Ok(raw) = String::from_utf8(output.stdout) else {
+    let Ok(raw_pid) = String::from_utf8(pid_output.stdout) else {
         return;
     };
-    let Some(frontmost_name) = normalize_frontmost_app_name(&raw) else {
-        eprintln!("[paste] ignoring frontmost app value '{}'", raw.trim());
+    let Some(pid) = parse_frontmost_pid(&raw_pid) else {
+        eprintln!("[paste] invalid frontmost app pid '{}'", raw_pid.trim());
         return;
     };
 
+    let name = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to get name of first application process whose frontmost is true")
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "<unknown>".to_string());
+
     if let Ok(mut slot) = paste_target_slot().lock() {
-        println!("[paste] captured frontmost app '{}'", frontmost_name);
-        *slot = Some(frontmost_name);
+        println!("[paste] captured frontmost app pid={} name='{}'", pid, name);
+        *slot = Some(MacPasteTarget { pid, name });
     }
 }
 
@@ -177,20 +192,28 @@ pub fn remember_active_paste_target() {
 #[cfg(target_os = "macos")]
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
-    let Some(app_name) = target else {
+    let Some(target) = target else {
         eprintln!("[paste] no captured app to restore on macOS");
         return;
     };
 
-    let escaped = app_name.replace('\\', "\\\\").replace('"', "\\\"");
     let result = Command::new("osascript")
         .arg("-e")
-        .arg(format!("tell application \"{}\" to activate", escaped))
+        .arg(format!(
+            "tell application \"System Events\" to set frontmost of (first application process whose unix id is {}) to true",
+            target.pid
+        ))
         .status();
     if result.as_ref().is_ok_and(|status| status.success()) {
-        println!("[paste] restored focus to app '{}'", app_name);
+        println!(
+            "[paste] restored focus to app pid={} name='{}'",
+            target.pid, target.name
+        );
     } else {
-        eprintln!("[paste] failed to restore focus to app '{}'", app_name);
+        eprintln!(
+            "[paste] failed to restore focus to app pid={} name='{}'",
+            target.pid, target.name
+        );
     }
     thread::sleep(Duration::from_millis(45));
 }
@@ -762,7 +785,7 @@ pub async fn stop_recording(
 mod tests {
     use super::ffmpeg_normalize_args;
     #[cfg(target_os = "macos")]
-    use super::normalize_frontmost_app_name;
+    use super::parse_frontmost_pid;
     use std::path::Path;
 
     #[test]
@@ -778,16 +801,11 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn normalize_frontmost_app_name_filters_invalid_values() {
-        assert_eq!(normalize_frontmost_app_name(""), None);
-        assert_eq!(normalize_frontmost_app_name("  \n"), None);
-        assert_eq!(
-            normalize_frontmost_app_name("OpenWispr"),
-            None
-        );
-        assert_eq!(
-            normalize_frontmost_app_name("Notes\n"),
-            Some("Notes".to_string())
-        );
+    fn parse_frontmost_pid_filters_invalid_values() {
+        assert_eq!(parse_frontmost_pid(""), None);
+        assert_eq!(parse_frontmost_pid("  \n"), None);
+        assert_eq!(parse_frontmost_pid("-1"), None);
+        assert_eq!(parse_frontmost_pid("0"), None);
+        assert_eq!(parse_frontmost_pid("1234\n"), Some(1234));
     }
 }
