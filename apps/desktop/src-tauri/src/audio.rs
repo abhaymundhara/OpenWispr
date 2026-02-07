@@ -13,6 +13,10 @@ use std::time::Duration;
 use stt::{create_adapter, AudioFormat as SttAudioFormat, SttAdapter, SttConfig};
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex as AsyncMutex;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, IsWindow, SetForegroundWindow,
+};
 
 // Simple wrapper to make Stream thread-safe
 struct AudioStream {
@@ -88,6 +92,118 @@ enum ClipboardSnapshot {
     OpaqueOrEmpty,
 }
 
+#[cfg(target_os = "macos")]
+fn normalize_frontmost_app_name(raw: &str) -> Option<String> {
+    let candidate = raw.trim();
+    if candidate.is_empty() {
+        return None;
+    }
+
+    let lowercase = candidate.to_lowercase();
+    if lowercase.contains("openwispr") {
+        return None;
+    }
+
+    Some(candidate.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn paste_target_slot() -> &'static Mutex<Option<String>> {
+    static SLOT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "windows")]
+fn paste_target_slot() -> &'static Mutex<Option<isize>> {
+    static SLOT: OnceLock<Mutex<Option<isize>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn paste_target_slot() -> &'static Mutex<Option<()>> {
+    static SLOT: OnceLock<Mutex<Option<()>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_active_paste_target() {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to get name of first application process whose frontmost is true")
+        .output();
+    let Ok(output) = output else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+
+    let Ok(raw) = String::from_utf8(output.stdout) else {
+        return;
+    };
+    let Some(frontmost_name) = normalize_frontmost_app_name(&raw) else {
+        return;
+    };
+
+    if let Ok(mut slot) = paste_target_slot().lock() {
+        *slot = Some(frontmost_name);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_active_paste_target() {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd == 0 {
+        return;
+    }
+    if let Ok(mut slot) = paste_target_slot().lock() {
+        *slot = Some(hwnd);
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn capture_active_paste_target() {}
+
+pub fn remember_active_paste_target() {
+    capture_active_paste_target();
+}
+
+#[cfg(target_os = "macos")]
+fn restore_active_paste_target() {
+    let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
+    let Some(app_name) = target else {
+        return;
+    };
+
+    let escaped = app_name.replace('\\', "\\\\").replace('"', "\\\"");
+    let _ = Command::new("osascript")
+        .arg("-e")
+        .arg(format!("tell application \"{}\" to activate", escaped))
+        .status();
+    thread::sleep(Duration::from_millis(45));
+}
+
+#[cfg(target_os = "windows")]
+fn restore_active_paste_target() {
+    let target = paste_target_slot().lock().ok().and_then(|slot| *slot);
+    let Some(hwnd) = target else {
+        return;
+    };
+
+    let valid = unsafe { IsWindow(hwnd) != 0 };
+    if !valid {
+        return;
+    }
+
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    thread::sleep(Duration::from_millis(45));
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn restore_active_paste_target() {}
+
 fn capture_clipboard(clipboard: &mut Clipboard) -> ClipboardSnapshot {
     if let Ok(text) = clipboard.get_text() {
         return ClipboardSnapshot::Text(text);
@@ -149,6 +265,10 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
     }
+
+    // The overlay can become the active app while transcribing. Move focus back
+    // to the app that was active at Fn press before injecting text.
+    restore_active_paste_target();
 
     let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
     let snapshot = capture_clipboard(&mut clipboard);
@@ -632,6 +752,8 @@ pub async fn stop_recording(
 #[cfg(test)]
 mod tests {
     use super::ffmpeg_normalize_args;
+    #[cfg(target_os = "macos")]
+    use super::normalize_frontmost_app_name;
     use std::path::Path;
 
     #[test]
@@ -643,5 +765,20 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "16000"));
         assert!(args.iter().any(|arg| arg == "-sample_fmt"));
         assert!(args.iter().any(|arg| arg == "s16"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn normalize_frontmost_app_name_filters_invalid_values() {
+        assert_eq!(normalize_frontmost_app_name(""), None);
+        assert_eq!(normalize_frontmost_app_name("  \n"), None);
+        assert_eq!(
+            normalize_frontmost_app_name("OpenWispr"),
+            None
+        );
+        assert_eq!(
+            normalize_frontmost_app_name("Notes\n"),
+            Some("Notes".to_string())
+        );
     }
 }

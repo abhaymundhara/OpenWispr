@@ -124,8 +124,9 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
     let capture = state.app.state::<AudioCapture>().inner().clone();
     let app_handle = state.app.clone();
 
-    if let Some(window) = state.app.get_window("main") {
-        if is_down {
+    if is_down {
+        audio::remember_active_paste_target();
+        if let Some(window) = state.app.get_window("main") {
             let _ = window.show();
         }
     }

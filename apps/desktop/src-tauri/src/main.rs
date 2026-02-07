@@ -27,7 +27,14 @@ fn show_models_window(app_handle: &tauri::AppHandle<Wry>) {
 }
 
 fn main() {
+    let mut tray = SystemTray::new();
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray.with_icon_as_template(false);
+    }
+
     let app = tauri::Builder::default()
+        .system_tray(tray)
         .on_system_tray_event(|app_handle, event| match event {
             SystemTrayEvent::LeftClick { .. }
             | SystemTrayEvent::RightClick { .. }
@@ -38,13 +45,6 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle();
-
-            let mut tray = SystemTray::new();
-            #[cfg(target_os = "macos")]
-            {
-                tray = tray.with_icon_as_template(false);
-            }
-            tray.build(app)?;
 
             #[cfg(target_os = "macos")]
             {
