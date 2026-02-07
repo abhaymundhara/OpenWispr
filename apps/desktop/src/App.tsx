@@ -12,7 +12,10 @@ type TranscriptionStatusEvent = {
 
 type ModelInfo = {
   name: string;
+  runtime: string;
   downloaded: boolean;
+  can_download: boolean;
+  note?: string;
 };
 
 const MODEL_SIZE_HINTS: Record<string, string> = {
@@ -26,6 +29,12 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
+  "mlx-community/whisper-tiny": "~75 MB",
+  "mlx-community/whisper-base": "~140 MB",
+  "mlx-community/whisper-small": "~460 MB",
+  "mlx-community/whisper-medium": "~1.5 GB",
+  "mlx-community/whisper-large-v3-turbo": "~1.6 GB",
+  "mlx-community/whisper-large-v3": "~3.1 GB",
 };
 
 const windowLabel =
@@ -123,13 +132,19 @@ function ModelManager() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [activeDownload, setActiveDownload] = useState<string>();
+  const [activeModel, setActiveModel] = useState<string>();
+  const [tab, setTab] = useState<"downloaded" | "library">("downloaded");
 
   const loadModels = async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const data = await invoke<ModelInfo[]>("list_models");
+      const [data, selected] = await Promise.all([
+        invoke<ModelInfo[]>("list_models"),
+        invoke<string>("get_active_model"),
+      ]);
       setModels(data);
+      setActiveModel(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -154,6 +169,18 @@ function ModelManager() {
     }
   };
 
+  const onSelectModel = async (model: string) => {
+    setError(undefined);
+    try {
+      await invoke("set_active_model", { model });
+      setActiveModel(model);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const downloadedModels = models.filter((m) => m.downloaded);
+
   return (
     <div className="h-screen w-screen bg-zinc-950 text-zinc-100 p-6 overflow-auto">
       <div className="mx-auto max-w-3xl">
@@ -173,54 +200,131 @@ function ModelManager() {
           </button>
         </div>
 
+        <div className="mb-4 inline-flex rounded-lg border border-zinc-800 overflow-hidden">
+          <button
+            className={`px-4 py-2 text-sm transition-colors ${
+              tab === "downloaded"
+                ? "bg-zinc-200 text-zinc-900"
+                : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+            }`}
+            onClick={() => setTab("downloaded")}
+          >
+            Downloaded
+          </button>
+          <button
+            className={`px-4 py-2 text-sm transition-colors border-l border-zinc-800 ${
+              tab === "library"
+                ? "bg-zinc-200 text-zinc-900"
+                : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+            }`}
+            onClick={() => setTab("library")}
+          >
+            Library
+          </button>
+        </div>
+
         {error && (
           <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
             {error}
           </div>
         )}
 
-        <div className="rounded-xl border border-zinc-800 overflow-hidden">
-          <div className="grid grid-cols-[1.2fr_0.7fr_0.6fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/80">
-            <div>Model</div>
-            <div>Size</div>
-            <div className="text-right">Action</div>
+        {tab === "downloaded" ? (
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <div className="grid grid-cols-[1.2fr_0.8fr_0.6fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/80">
+              <div>Model</div>
+              <div>Runtime</div>
+              <div className="text-right">Select</div>
+            </div>
+            {loading ? (
+              <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
+            ) : downloadedModels.length === 0 ? (
+              <div className="px-4 py-8 text-sm text-zinc-400">
+                No downloaded models yet. Go to Library and download one.
+              </div>
+            ) : (
+              downloadedModels.map((model) => {
+                const selected = activeModel === model.name;
+                return (
+                  <div
+                    key={model.name}
+                    className="grid grid-cols-[1.2fr_0.8fr_0.6fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
+                  >
+                    <div className="font-medium">{model.name}</div>
+                    <div className="text-zinc-400 text-sm">{model.runtime}</div>
+                    <div className="text-right">
+                      <button
+                        className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
+                          selected
+                            ? "bg-emerald-500/20 text-emerald-300"
+                            : "bg-zinc-800 hover:bg-zinc-700 text-zinc-100"
+                        }`}
+                        onClick={() => onSelectModel(model.name)}
+                        disabled={selected}
+                      >
+                        {selected ? "Selected" : "Use"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
-          {loading ? (
-            <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
-          ) : (
-            models.map((model) => {
-              const downloading = activeDownload === model.name;
-              return (
-                <div
-                  key={model.name}
-                  className="grid grid-cols-[1.2fr_0.7fr_0.6fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
-                >
-                  <div className="font-medium">{model.name}</div>
-                  <div className="text-zinc-400 text-sm">
-                    {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
+        ) : (
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/80">
+              <div>Model</div>
+              <div>Size</div>
+              <div>Runtime</div>
+              <div className="text-right">Action</div>
+            </div>
+            {loading ? (
+              <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
+            ) : (
+              models.map((model) => {
+                const downloading = activeDownload === model.name;
+                return (
+                  <div
+                    key={model.name}
+                    className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
+                  >
+                    <div>
+                      <div className="font-medium">{model.name}</div>
+                      {model.note && (
+                        <div className="text-xs text-zinc-500 mt-0.5">{model.note}</div>
+                      )}
+                    </div>
+                    <div className="text-zinc-400 text-sm">
+                      {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
+                    </div>
+                    <div className="text-zinc-400 text-sm">{model.runtime}</div>
+                    <div className="text-right">
+                      <button
+                        className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
+                          model.downloaded
+                            ? "bg-emerald-500/20 text-emerald-300 cursor-default"
+                            : !model.can_download
+                              ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                            : "bg-blue-600 hover:bg-blue-500 text-white"
+                        }`}
+                        disabled={model.downloaded || downloading || !model.can_download}
+                        onClick={() => onDownload(model.name)}
+                      >
+                        {model.downloaded
+                          ? "Downloaded"
+                          : !model.can_download
+                            ? "Coming soon"
+                          : downloading
+                            ? "Downloading..."
+                            : "Download"}
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <button
-                      className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                        model.downloaded
-                          ? "bg-emerald-500/20 text-emerald-300 cursor-default"
-                          : "bg-blue-600 hover:bg-blue-500 text-white"
-                      }`}
-                      disabled={model.downloaded || downloading}
-                      onClick={() => onDownload(model.name)}
-                    >
-                      {model.downloaded
-                        ? "Downloaded"
-                        : downloading
-                          ? "Downloading..."
-                          : "Download"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

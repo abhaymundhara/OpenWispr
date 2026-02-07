@@ -24,6 +24,7 @@ pub struct AudioCapture {
     samples: Arc<Mutex<Vec<f32>>>,
     format: Arc<Mutex<SttAudioFormat>>,
     stt_adapter: Arc<AsyncMutex<Option<Box<dyn SttAdapter>>>>,
+    loaded_model: Arc<AsyncMutex<Option<String>>>,
 }
 
 impl AudioCapture {
@@ -33,6 +34,7 @@ impl AudioCapture {
             samples: Arc::new(Mutex::new(Vec::new())),
             format: Arc::new(Mutex::new(SttAudioFormat::default())),
             stt_adapter: Arc::new(AsyncMutex::new(None)),
+            loaded_model: Arc::new(AsyncMutex::new(None)),
         }
     }
 }
@@ -44,6 +46,7 @@ impl Clone for AudioCapture {
             samples: self.samples.clone(),
             format: self.format.clone(),
             stt_adapter: self.stt_adapter.clone(),
+            loaded_model: self.loaded_model.clone(),
         }
     }
 }
@@ -327,14 +330,20 @@ pub async fn stop_recording_for_capture(
         let format = capture.format.lock().unwrap();
         format.clone()
     };
+    let target_model = crate::models::active_model_value();
     let mut adapter_guard = capture.stt_adapter.lock().await;
-    if adapter_guard.is_none() {
+    let mut loaded_model_guard = capture.loaded_model.lock().await;
+    if adapter_guard.is_none() || loaded_model_guard.as_deref() != Some(target_model.as_str()) {
         let mut adapter = create_adapter().map_err(|e| e.to_string())?;
         adapter
-            .initialize(SttConfig::default())
+            .initialize(SttConfig {
+                model_name: target_model.clone(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| e.to_string())?;
         *adapter_guard = Some(adapter);
+        *loaded_model_guard = Some(target_model);
     }
     let adapter = adapter_guard
         .as_ref()

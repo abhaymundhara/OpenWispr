@@ -125,7 +125,9 @@ fn main() {
             audio::start_recording,
             audio::stop_recording,
             models::list_models,
-            models::download_model
+            models::download_model,
+            models::get_active_model,
+            models::set_active_model
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
