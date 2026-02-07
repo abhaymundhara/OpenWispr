@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api";
@@ -41,6 +41,119 @@ const windowLabel =
   (window as { __TAURI_METADATA__?: { __currentWindow?: { label?: string } } })
     .__TAURI_METADATA__?.__currentWindow?.label ?? "main";
 
+const useFeedbackSounds = (enabled: boolean) => {
+  const ctxRef = useRef<AudioContext | null>(null);
+  const lastPlayedAtRef = useRef(0);
+
+  const getContext = () => {
+    if (ctxRef.current) return ctxRef.current;
+    const Ctx =
+      (window.AudioContext as typeof AudioContext | undefined) ||
+      ((window as Window & { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext as typeof AudioContext | undefined);
+    if (!Ctx) return null;
+    ctxRef.current = new Ctx();
+    return ctxRef.current;
+  };
+
+  const playStartSound = () => {
+    if (!enabled) return;
+    const now = Date.now();
+    if (now - lastPlayedAtRef.current < 40) return;
+    lastPlayedAtRef.current = now;
+
+    const ctx = getContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended") void ctx.resume();
+    const t = ctx.currentTime;
+
+    const playTone = (freq: number, gainStart: number, startOffset: number, duration: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(freq, t + startOffset);
+      gain.gain.setValueAtTime(gainStart, t + startOffset);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + startOffset + duration);
+      osc.start(t + startOffset);
+      osc.stop(t + startOffset + duration);
+    };
+
+    playTone(350, 0.01, 0.0, 0.08);
+    playTone(500, 0.008, 0.05, 0.08);
+    playTone(750, 0.006, 0.1, 0.1);
+  };
+
+  const playStopSound = () => {
+    if (!enabled) return;
+    const now = Date.now();
+    if (now - lastPlayedAtRef.current < 40) return;
+    lastPlayedAtRef.current = now;
+
+    const ctx = getContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended") void ctx.resume();
+    const t = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.frequency.setValueAtTime(600, t);
+    osc1.frequency.exponentialRampToValueAtTime(400, t + 0.1);
+    gain1.gain.setValueAtTime(0.008, t);
+    gain1.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+    osc1.start(t);
+    osc1.stop(t + 0.15);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.frequency.setValueAtTime(350, t + 0.08);
+    osc2.frequency.exponentialRampToValueAtTime(250, t + 0.2);
+    gain2.gain.setValueAtTime(0.006, t + 0.08);
+    gain2.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    osc2.start(t + 0.08);
+    osc2.stop(t + 0.25);
+  };
+
+  return { playStartSound, playStopSound };
+};
+
+const JarvisWaveBars = ({ audioLevel }: { audioLevel: number }) => {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((v) => v + 1), 80);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const time = tick * 0.32;
+  const normalizedLevel = Math.min(audioLevel / 15, 1);
+
+  return (
+    <div className="flex h-[18px] w-full items-center justify-center gap-[3px]">
+      {[...Array(10)].map((_, index) => {
+        const baseHeight = 6;
+        const maxHeight = 14;
+        const variation = Math.sin(time + index * 0.4) * 0.6 + (Math.random() - 0.5) * 1.0;
+        const height = Math.max(
+          3,
+          Math.min(maxHeight, baseHeight + normalizedLevel * (maxHeight - baseHeight) + variation),
+        );
+        return (
+          <div
+            key={index}
+            className="w-[3px] rounded-[1.5px] bg-white/80 transition-[height] duration-100 ease-out"
+            style={{ height: `${height}px` }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
 const FloatingPill = ({
   shouldRecord,
   status,
@@ -76,53 +189,51 @@ const FloatingPill = ({
       animate={{ scale: 1, opacity: 1, y: 0 }}
       exit={{ scale: 0.96, opacity: 0, y: 12 }}
       transition={{ type: "spring", damping: 26, stiffness: 340, mass: 0.9 }}
-      className="fixed bottom-8 left-1/2 -translate-x-1/2"
+      className="fixed bottom-2 left-1/2 z-[999999] -translate-x-1/2"
+      onClick={() => {
+        if (shouldRecord) onStop();
+      }}
     >
-      <div className="relative flex items-center gap-2.5 px-4 py-2.5 bg-black/95 backdrop-blur-xl border border-white/20 rounded-full shadow-2xl">
-        <button
-          className="w-3 h-3 bg-red-500 rounded-sm hover:bg-red-400 transition-colors flex-shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onStop();
-          }}
-        />
-
-        <div className="flex items-center gap-0.5 h-5">
-          {[...Array(10)].map((_, i) => {
-            const baseHeight = 6;
-            const maxHeight = 14;
-            const normalizedLevel = Math.min(audioLevel / 15, 1);
-            const variation = i * 0.2;
-            const time = Date.now() * 0.004;
-            const phase = i * 0.4;
-            const sineVariation = Math.sin(time + phase) * 0.6;
-            const randomVariation = (Math.random() - 0.5) * 1.0;
-
-            const height =
-              baseHeight +
-              normalizedLevel * (maxHeight - baseHeight) +
-              variation +
-              sineVariation +
-              randomVariation;
-            const finalHeight = Math.max(3, Math.min(maxHeight, height));
-
-            return (
-              <div
-                key={i}
-                className="w-0.5 bg-white/70 rounded-full transition-all duration-100"
-                style={{ height: `${finalHeight}px` }}
-              />
-            );
-          })}
-        </div>
-
-        <div className="text-xs text-white/80 max-w-[220px] truncate">
-          {status === "processing" ? "Transcribing..." : "Listening..."}
-        </div>
-        {status === "error" && error && (
-          <div className="text-xs text-red-300 max-w-[220px] truncate">{error}</div>
+      <AnimatePresence mode="wait">
+        {status === "processing" ? (
+          <motion.div
+            key="transcribing"
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.85, opacity: 0 }}
+            className="flex h-8 w-20 items-center justify-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]"
+          >
+            <div className="flex gap-1.5">
+              <span className="loading-dot" />
+              <span className="loading-dot" />
+              <span className="loading-dot" />
+            </div>
+          </motion.div>
+        ) : status === "error" ? (
+          <motion.div
+            key="error"
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.85, opacity: 0 }}
+            className="flex h-8 min-w-[140px] items-center justify-center rounded-2xl border border-red-300/30 bg-red-500/95 px-[15px] text-white shadow-[0_4px_12px_rgba(255,59,48,0.3)]"
+          >
+            <span className="mr-1.5 text-sm">⚠️</span>
+            <span className="max-w-[220px] truncate text-xs font-medium">
+              {error || "Transcription error"}
+            </span>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="recording"
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.85, opacity: 0 }}
+            className="flex h-8 w-[120px] items-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]"
+          >
+            <JarvisWaveBars audioLevel={audioLevel} />
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
     </motion.div>
   );
 };
@@ -334,6 +445,8 @@ function DictationPillApp() {
   const [fnHeld, setFnHeld] = useState(false);
   const [sttStatus, setSttStatus] = useState<TranscriptionStatus>("idle");
   const [sttError, setSttError] = useState<string>();
+  const previousFnHeld = useRef(false);
+  const { playStartSound, playStopSound } = useFeedbackSounds(true);
 
   useEffect(() => {
     let unlistenHold: (() => void) | undefined;
@@ -382,10 +495,41 @@ function DictationPillApp() {
     };
   }, []);
 
+  useEffect(() => {
+    if (fnHeld && !previousFnHeld.current) {
+      playStartSound();
+    } else if (!fnHeld && previousFnHeld.current) {
+      playStopSound();
+    }
+    previousFnHeld.current = fnHeld;
+  }, [fnHeld, playStartSound, playStopSound]);
+
   const showPill = fnHeld || sttStatus !== "idle";
 
   return (
     <div className="h-screen w-screen flex items-center justify-center overflow-hidden bg-transparent">
+      <style>{`
+        .loading-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 9999px;
+          background: rgba(255, 255, 255, 0.85);
+          animation: loadingPulse 1.4s infinite ease-in-out;
+        }
+        .loading-dot:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dot:nth-child(2) { animation-delay: -0.16s; }
+        .loading-dot:nth-child(3) { animation-delay: 0s; }
+        @keyframes loadingPulse {
+          0%, 80%, 100% {
+            transform: scale(0.6);
+            opacity: 0.4;
+          }
+          40% {
+            transform: scale(1);
+            opacity: 1;
+          }
+        }
+      `}</style>
       <AnimatePresence>
         {showPill && (
           <FloatingPill
@@ -393,6 +537,7 @@ function DictationPillApp() {
             status={sttStatus}
             error={sttError}
             onStop={() => {
+              playStopSound();
               setFnHeld(false);
               invoke("stop_recording").catch(console.error);
             }}
