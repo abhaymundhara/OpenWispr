@@ -2,6 +2,7 @@
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use tauri::Manager;
+use tauri::SystemTray;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use std::sync::{Arc, Mutex};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -18,6 +19,7 @@ use audio::AudioCapture;
 
 fn main() {
   tauri::Builder::default()
+    .system_tray(SystemTray::new())
     .setup(|app| {
       let handle = app.handle();
       
