@@ -4,6 +4,7 @@ use std::ffi::c_void;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr::null_mut;
 use tauri::{AppHandle, Manager, Wry};
+use crate::audio::{self, AudioCapture};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -120,10 +121,25 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
     state.is_down = is_down;
     let _ = state.app.emit_all("fn-hold", is_down);
 
+    let capture = state.app.state::<AudioCapture>().inner().clone();
+    let app_handle = state.app.clone();
+
     if let Some(window) = state.app.get_window("main") {
         if is_down {
             let _ = window.show();
         }
+    }
+
+    if is_down {
+        if let Err(err) = audio::start_recording_for_capture(&capture, app_handle) {
+            eprintln!("Failed to start recording on Fn press: {}", err);
+        }
+    } else {
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
+                eprintln!("Failed to stop recording on Fn release: {}", err);
+            }
+        });
     }
 }
 

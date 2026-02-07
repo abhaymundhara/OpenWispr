@@ -30,13 +30,11 @@ const FloatingPill = ({
       return;
     }
 
-    invoke("start_recording").catch(console.error);
     const unlisten = listen<number>("audio-level", (event) => {
       setAudioLevel(event.payload);
     });
 
     return () => {
-      invoke("stop_recording").catch(console.error);
       unlisten.then((fn) => fn());
       setAudioLevel(0);
     };
@@ -267,7 +265,10 @@ function App() {
             shouldRecord={fnHeld}
             status={sttStatus}
             error={sttError}
-            onStop={() => setFnHeld(false)}
+            onStop={() => {
+              setFnHeld(false);
+              invoke("stop_recording").catch(console.error);
+            }}
           />
         )}
       </AnimatePresence>

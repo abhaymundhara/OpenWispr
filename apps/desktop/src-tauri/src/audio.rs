@@ -34,6 +34,16 @@ impl AudioCapture {
     }
 }
 
+impl Clone for AudioCapture {
+    fn clone(&self) -> Self {
+        Self {
+            stream: self.stream.clone(),
+            samples: self.samples.clone(),
+            format: self.format.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct TranscriptionStatusEvent {
     status: String,
@@ -157,15 +167,14 @@ fn calculate_rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
-#[tauri::command]
-pub fn start_recording(
-    state: tauri::State<AudioCapture>,
+pub fn start_recording_for_capture(
+    capture: &AudioCapture,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut stream_lock = state.stream.lock().unwrap();
-    
-    // Stop existing stream if any
-    stream_lock.stream = None;
+    let mut stream_lock = capture.stream.lock().unwrap();
+    if stream_lock.stream.is_some() {
+        return Ok(());
+    }
     
     // Get the default audio host
     let host = cpal::default_host();
@@ -182,11 +191,11 @@ pub fn start_recording(
 
     // Reset buffered samples and capture format for the next transcription run.
     {
-        let mut samples = state.samples.lock().unwrap();
+        let mut samples = capture.samples.lock().unwrap();
         samples.clear();
     }
     {
-        let mut format = state.format.lock().unwrap();
+        let mut format = capture.format.lock().unwrap();
         *format = SttAudioFormat {
             sample_rate: config.sample_rate().0,
             channels: config.channels(),
@@ -199,13 +208,13 @@ pub fn start_recording(
     // Build the input stream
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => {
-            build_input_stream::<f32>(&device, &config.into(), app, state.samples.clone())?
+            build_input_stream::<f32>(&device, &config.into(), app, capture.samples.clone())?
         }
         cpal::SampleFormat::I16 => {
-            build_input_stream::<i16>(&device, &config.into(), app, state.samples.clone())?
+            build_input_stream::<i16>(&device, &config.into(), app, capture.samples.clone())?
         }
         cpal::SampleFormat::U16 => {
-            build_input_stream::<u16>(&device, &config.into(), app, state.samples.clone())?
+            build_input_stream::<u16>(&device, &config.into(), app, capture.samples.clone())?
         }
         _ => return Err("Unsupported sample format".to_string()),
     };
@@ -217,6 +226,14 @@ pub fn start_recording(
     stream_lock.stream = Some(stream);
     
     Ok(())
+}
+
+#[tauri::command]
+pub fn start_recording(
+    state: tauri::State<AudioCapture>,
+    app: AppHandle,
+) -> Result<(), String> {
+    start_recording_for_capture(state.inner(), app)
 }
 
 fn build_input_stream<T>(
@@ -276,20 +293,22 @@ where
     Ok(stream)
 }
 
-#[tauri::command]
-pub async fn stop_recording(
-    state: tauri::State<'_, AudioCapture>,
+pub async fn stop_recording_for_capture(
+    capture: AudioCapture,
     app: AppHandle,
 ) -> Result<(), String> {
-    {
-        let mut stream_lock = state.stream.lock().unwrap();
-        stream_lock.stream = None;
+    let had_stream = {
+        let mut stream_lock = capture.stream.lock().unwrap();
+        stream_lock.stream.take().is_some()
+    };
+    if !had_stream {
+        return Ok(());
     }
 
     emit_transcription_status(&app, "processing", None);
 
     let audio_data = {
-        let mut samples = state.samples.lock().unwrap();
+        let mut samples = capture.samples.lock().unwrap();
         std::mem::take(&mut *samples)
     };
 
@@ -302,7 +321,7 @@ pub async fn stop_recording(
     }
 
     let format = {
-        let format = state.format.lock().unwrap();
+        let format = capture.format.lock().unwrap();
         format.clone()
     };
     let mut adapter = create_adapter().map_err(|e| e.to_string())?;
@@ -339,4 +358,12 @@ pub async fn stop_recording(
             Err(message)
         }
     }
+}
+
+#[tauri::command]
+pub async fn stop_recording(
+    state: tauri::State<'_, AudioCapture>,
+    app: AppHandle,
+) -> Result<(), String> {
+    stop_recording_for_capture(state.inner().clone(), app).await
 }

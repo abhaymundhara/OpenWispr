@@ -8,6 +8,7 @@ use objc2_core_graphics::{
 use std::ffi::c_void;
 use std::ptr::NonNull;
 use tauri::{AppHandle, Manager, Wry};
+use crate::audio::{self, AudioCapture};
 
 struct FnHoldState {
     app: AppHandle<Wry>,
@@ -38,10 +39,25 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
 
         let _ = state.app.emit_all("fn-hold", is_down);
 
+        let capture = state.app.state::<AudioCapture>().inner().clone();
+        let app_handle = state.app.clone();
+
         if let Some(window) = state.app.get_window("main") {
             if is_down {
                 let _ = window.show();
             }
+        }
+
+        if is_down {
+            if let Err(err) = audio::start_recording_for_capture(&capture, app_handle) {
+                eprintln!("Failed to start recording on Fn press: {}", err);
+            }
+        } else {
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
+                    eprintln!("Failed to stop recording on Fn release: {}", err);
+                }
+            });
         }
     }
 
