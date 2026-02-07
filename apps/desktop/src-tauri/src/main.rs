@@ -45,6 +45,11 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle();
+            if let Some(main_window) = app.get_window("main") {
+                // Keep overlay non-interactive so it does not block the active app
+                // while still allowing us to keep the process alive.
+                let _ = main_window.set_ignore_cursor_events(true);
+            }
 
             #[cfg(target_os = "macos")]
             {

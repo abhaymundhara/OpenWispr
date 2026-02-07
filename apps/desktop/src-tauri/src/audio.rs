@@ -132,9 +132,11 @@ fn capture_active_paste_target() {
         .arg("tell application \"System Events\" to get name of first application process whose frontmost is true")
         .output();
     let Ok(output) = output else {
+        eprintln!("[paste] could not query frontmost app with osascript");
         return;
     };
     if !output.status.success() {
+        eprintln!("[paste] osascript query for frontmost app failed");
         return;
     }
 
@@ -142,10 +144,12 @@ fn capture_active_paste_target() {
         return;
     };
     let Some(frontmost_name) = normalize_frontmost_app_name(&raw) else {
+        eprintln!("[paste] ignoring frontmost app value '{}'", raw.trim());
         return;
     };
 
     if let Ok(mut slot) = paste_target_slot().lock() {
+        println!("[paste] captured frontmost app '{}'", frontmost_name);
         *slot = Some(frontmost_name);
     }
 }
@@ -154,9 +158,11 @@ fn capture_active_paste_target() {
 fn capture_active_paste_target() {
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd == 0 {
+        eprintln!("[paste] GetForegroundWindow returned null");
         return;
     }
     if let Ok(mut slot) = paste_target_slot().lock() {
+        println!("[paste] captured foreground HWND 0x{:X}", hwnd as usize);
         *slot = Some(hwnd);
     }
 }
@@ -172,14 +178,20 @@ pub fn remember_active_paste_target() {
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
     let Some(app_name) = target else {
+        eprintln!("[paste] no captured app to restore on macOS");
         return;
     };
 
     let escaped = app_name.replace('\\', "\\\\").replace('"', "\\\"");
-    let _ = Command::new("osascript")
+    let result = Command::new("osascript")
         .arg("-e")
         .arg(format!("tell application \"{}\" to activate", escaped))
         .status();
+    if result.as_ref().is_ok_and(|status| status.success()) {
+        println!("[paste] restored focus to app '{}'", app_name);
+    } else {
+        eprintln!("[paste] failed to restore focus to app '{}'", app_name);
+    }
     thread::sleep(Duration::from_millis(45));
 }
 
@@ -187,17 +199,20 @@ fn restore_active_paste_target() {
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| *slot);
     let Some(hwnd) = target else {
+        eprintln!("[paste] no captured HWND to restore on Windows");
         return;
     };
 
     let valid = unsafe { IsWindow(hwnd) != 0 };
     if !valid {
+        eprintln!("[paste] captured HWND is no longer valid");
         return;
     }
 
     unsafe {
         let _ = SetForegroundWindow(hwnd);
     }
+    println!("[paste] restored focus to HWND 0x{:X}", hwnd as usize);
     thread::sleep(Duration::from_millis(45));
 }
 
@@ -630,9 +645,6 @@ pub async fn stop_recording_for_capture(
     if audio_data.is_empty() {
         println!("[stt] no audio captured, skipping transcription");
         emit_transcription_status(&app, "idle", None);
-        if let Some(window) = app.get_window("main") {
-            let _ = window.hide();
-        }
         return Ok(());
     }
 
@@ -727,9 +739,6 @@ pub async fn stop_recording_for_capture(
                 },
             );
             emit_transcription_status(&app, "idle", None);
-            if let Some(window) = app.get_window("main") {
-                let _ = window.hide();
-            }
             Ok(())
         }
         Err(err) => {
