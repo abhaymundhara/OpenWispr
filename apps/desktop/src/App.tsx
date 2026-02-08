@@ -331,8 +331,11 @@ function ModelManager() {
   };
 
   const downloadedModels = models.filter((m) => m.downloaded);
+  const activeModelInfo = models.find((m) => m.name === activeModel);
+  const downloadableCount = models.filter(
+    (m) => !m.downloaded && m.can_download,
+  ).length;
 
-  // Reusable Components
   const TabButton = ({
     active,
     onClick,
@@ -344,14 +347,16 @@ function ModelManager() {
   }) => (
     <button
       onClick={onClick}
-      className={`relative px-5 py-2 text-sm font-medium transition-colors duration-200 ${
-        active ? "text-white" : "text-white/40 hover:text-white/70"
+      className={`relative rounded-full px-5 py-2 text-sm font-medium transition-colors duration-200 ${
+        active
+          ? "text-white"
+          : "text-white/45 hover:bg-white/[0.04] hover:text-white/75"
       }`}
     >
       {active && (
         <motion.div
           layoutId="activeTab"
-          className="absolute inset-0 bg-white/10 rounded-full"
+          className="absolute inset-0 rounded-full border border-white/15 bg-white/10"
           transition={{ type: "spring", stiffness: 500, damping: 30 }}
         />
       )}
@@ -363,7 +368,7 @@ function ModelManager() {
     const isWhisper = type.toLowerCase().includes("whisper");
     return (
       <span
-        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium tracking-wide border ${
+        className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
           isWhisper
             ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
             : "border-blue-500/20 bg-blue-500/10 text-blue-400"
@@ -375,148 +380,174 @@ function ModelManager() {
   };
 
   return (
-    <div className="h-screen w-screen bg-[#050505] text-white/90 p-8 overflow-hidden flex flex-col font-sans select-none">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8 flex-shrink-0">
-        <div>
-          <h1 className="text-2xl font-light tracking-tight text-white mb-1">
-            Models
-          </h1>
-          <p className="text-white/40 text-sm font-light">
-            Manage your local speech engines
-          </p>
+    <div className="h-screen w-screen overflow-hidden bg-[#09090b] text-white/90">
+      <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-8 pb-6 pt-7 font-sans select-none">
+        <div className="mb-7 flex items-start justify-between">
+          <div className="space-y-2">
+            <h1 className="text-[40px] font-light leading-none tracking-tight text-white">
+              Models
+            </h1>
+            <p className="text-sm text-white/50">
+              Manage your local speech engines
+            </p>
+          </div>
+          <button
+            onClick={loadModels}
+            disabled={loading}
+            className="rounded-full border border-white/10 p-2.5 text-white/45 transition-all hover:bg-white/[0.05] hover:text-white disabled:cursor-wait disabled:opacity-50"
+            title="Refresh models"
+          >
+            <svg
+              className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+          </button>
         </div>
-        <button
-          onClick={loadModels}
-          disabled={loading}
-          className="p-2 rounded-full text-white/40 hover:text-white hover:bg-white/5 transition-all active:scale-95"
-          title="Refresh"
-        >
-          <svg
-            className={`w-5 h-5 ${loading ? "animate-spin" : ""}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-        </button>
-      </div>
 
-      {/* Tabs */}
-      <div className="flex justify-center mb-8 flex-shrink-0">
-        <div className="bg-white/5 p-1 rounded-full inline-flex">
-          <TabButton
-            active={tab === "downloaded"}
-            onClick={() => setTab("downloaded")}
-          >
-            Installed
-          </TabButton>
-          <TabButton
-            active={tab === "library"}
-            onClick={() => setTab("library")}
-          >
-            Library
-          </TabButton>
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <div className="inline-flex rounded-full border border-white/10 bg-white/[0.03] p-1">
+            <TabButton
+              active={tab === "downloaded"}
+              onClick={() => setTab("downloaded")}
+            >
+              Installed
+            </TabButton>
+            <TabButton
+              active={tab === "library"}
+              onClick={() => setTab("library")}
+            >
+              Library
+            </TabButton>
+          </div>
+          <div className="hidden text-xs text-white/40 sm:block">
+            Active:{" "}
+            <span className="font-medium text-white/75">
+              {activeModelInfo?.name ?? "None selected"}
+            </span>
+          </div>
         </div>
-      </div>
 
-      {/* Error Message */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mb-6 mx-auto max-w-lg w-full bg-red-500/10 border border-red-500/20 text-red-200 px-4 py-3 rounded-xl text-sm text-center backdrop-blur-sm"
-          >
-            {error}
-          </motion.div>
-        )}
-      </AnimatePresence>
+        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
+              Installed
+            </p>
+            <p className="mt-1 text-xl font-medium text-white">
+              {downloadedModels.length}
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
+              Available To Download
+            </p>
+            <p className="mt-1 text-xl font-medium text-white">
+              {downloadableCount}
+            </p>
+          </div>
+          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
+              Active Engine
+            </p>
+            <p className="mt-1 truncate text-sm font-medium text-white/85">
+              {activeModelInfo?.name ?? "Not set"}
+            </p>
+          </div>
+        </div>
 
-      {/* Content Area */}
-      <div className="flex-1 overflow-y-auto min-h-0 pr-2 -mr-2 scrollbar-hide">
-        <div className="max-w-3xl mx-auto space-y-3 pb-8">
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="mb-4 rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3"
+            >
+              <div className="text-xs uppercase tracking-[0.14em] text-red-200/80">
+                Model Error
+              </div>
+              <div className="mt-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-sm text-red-100/90">
+                {error}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           {loading && models.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-white/20">
-              <span className="loading-dot mb-4" />
-              <span className="text-sm font-light">Fetching models...</span>
+            <div className="flex flex-col items-center justify-center py-20 text-white/35">
+              <span className="loading-dot mb-3" />
+              <span className="text-sm">Loading model catalog...</span>
             </div>
           ) : tab === "downloaded" ? (
             downloadedModels.length === 0 ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="text-center py-20"
-              >
-                <div className="text-white/20 mb-3 text-4xl">box</div>
-                <p className="text-white/40 font-light">No models installed</p>
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] px-6 py-12 text-center">
+                <p className="text-white/70">No models installed yet.</p>
                 <button
                   onClick={() => setTab("library")}
-                  className="mt-4 text-emerald-400 hover:text-emerald-300 text-sm hover:underline underline-offset-4"
+                  className="mt-4 rounded-full border border-white/15 px-4 py-2 text-sm text-white/80 transition-colors hover:bg-white/[0.06]"
                 >
-                  Go to Library →
+                  Browse library
                 </button>
-              </motion.div>
+              </div>
             ) : (
               <AnimatePresence mode="popLayout">
-                {downloadedModels.map((model) => {
-                  const isSelected = activeModel === model.name;
-                  return (
-                    <motion.div
-                      layout
-                      key={model.name}
-                      initial={{ opacity: 0, scale: 0.98 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.98 }}
-                      className={`group relative flex items-center justify-between p-5 rounded-2xl border transition-all duration-300 ${
-                        isSelected
-                          ? "bg-white/[0.08] border-white/20 shadow-[0_4px_24px_-8px_rgba(255,255,255,0.1)]"
-                          : "bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.05] hover:border-white/10"
-                      }`}
-                    >
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-3">
-                          <span className="text-base font-medium text-white/90">
-                            {model.name}
-                          </span>
-                          {isSelected && (
-                            <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-white/40">
-                          <span>{model.runtime}</span>
-                          <span>•</span>
-                          <span>
-                            {MODEL_SIZE_HINTS[model.name] ?? "Unknown size"}
-                          </span>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => onSelectModel(model.name)}
-                        disabled={isSelected}
-                        className={`px-5 py-2 rounded-full text-xs font-medium tracking-wide transition-all duration-200 ${
+                <div className="space-y-3 pb-4">
+                  {downloadedModels.map((model) => {
+                    const isSelected = activeModel === model.name;
+                    return (
+                      <motion.div
+                        layout
+                        key={model.name}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 6 }}
+                        className={`rounded-2xl border px-5 py-4 transition-colors ${
                           isSelected
-                            ? "bg-white/10 text-white/50 cursor-default"
-                            : "bg-white text-black hover:bg-white/90 hover:shadow-[0_0_12px_rgba(255,255,255,0.3)] active:scale-95"
+                            ? "border-emerald-400/35 bg-emerald-400/[0.08]"
+                            : "border-white/[0.08] bg-white/[0.025]"
                         }`}
                       >
-                        {isSelected ? "Active" : "Select"}
-                      </button>
-                    </motion.div>
-                  );
-                })}
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <p className="truncate text-base font-medium text-white">
+                                {model.name}
+                              </p>
+                              <StatusBadge type={model.runtime} />
+                            </div>
+                            <div className="text-xs text-white/45">
+                              Size: {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => onSelectModel(model.name)}
+                            disabled={isSelected}
+                            className={`shrink-0 rounded-full px-4 py-2 text-xs font-medium transition-colors ${
+                              isSelected
+                                ? "cursor-default bg-white/10 text-white/60"
+                                : "border border-white/20 bg-white/5 text-white hover:bg-white/15"
+                            }`}
+                          >
+                            {isSelected ? "Active" : "Set Active"}
+                          </button>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
               </AnimatePresence>
             )
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 pb-4">
               {models.map((model, idx) => {
                 const isDownloading = activeDownload === model.name;
                 const isDownloaded = model.downloaded;
@@ -530,112 +561,78 @@ function ModelManager() {
 
                 return (
                   <motion.div
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.03 }}
+                    transition={{ delay: idx * 0.02 }}
                     key={model.name}
-                    className="group bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.04] hover:border-white/10 p-5 rounded-2xl flex items-center justify-between transition-colors duration-200"
+                    className="rounded-2xl border border-white/[0.08] bg-white/[0.025] px-5 py-4"
                   >
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-medium text-white/80 group-hover:text-white transition-colors">
-                          {model.name}
-                        </span>
-                        <StatusBadge type={model.runtime} />
-                      </div>
-                      <div className="text-xs text-white/40 font-light flex gap-3">
-                        <span>{MODEL_SIZE_HINTS[model.name] || "-- MB"}</span>
-                        {model.note && (
-                          <>
-                            <span className="opacity-30">|</span>
-                            <span>{model.note}</span>
-                          </>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium text-white/90">
+                            {model.name}
+                          </p>
+                          <StatusBadge type={model.runtime} />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-white/45">
+                          <span>
+                            Size: {MODEL_SIZE_HINTS[model.name] || "Unknown"}
+                          </span>
+                          {model.note && (
+                            <>
+                              <span>•</span>
+                              <span>{model.note}</span>
+                            </>
+                          )}
+                        </div>
+                        {isDownloading && (
+                          <div className="w-[290px] max-w-full pt-1">
+                            <div className="mb-1 flex items-center justify-between text-[11px] text-white/50">
+                              <span className="truncate pr-2">{progressText}</span>
+                              <span className="tabular-nums">
+                                {typeof progressPercent === "number"
+                                  ? `${Math.round(progressPercent)}%`
+                                  : "--"}
+                              </span>
+                            </div>
+                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                              <div
+                                className="h-full rounded-full bg-emerald-400 transition-all duration-200"
+                                style={{ width: `${progressPercent ?? 10}%` }}
+                              />
+                            </div>
+                          </div>
                         )}
                       </div>
-                      {isDownloading && (
-                        <div className="mt-3 w-[260px] max-w-full">
-                          <div className="mb-1 flex items-center justify-between text-[11px] text-white/45">
-                            <span className="truncate pr-2">{progressText}</span>
-                            <span className="tabular-nums">
-                              {typeof progressPercent === "number"
-                                ? `${Math.round(progressPercent)}%`
-                                : "--"}
-                            </span>
-                          </div>
-                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                            <div
-                              className="h-full rounded-full bg-emerald-400 transition-all duration-200"
-                              style={{
-                                width: `${progressPercent ?? 10}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
 
-                    <div>
-                      {isDownloaded ? (
-                        <div className="px-4 py-2 text-xs font-medium text-emerald-400/80 bg-emerald-500/5 rounded-full border border-emerald-500/10 flex items-center gap-1.5">
-                          <svg
-                            className="w-3 h-3"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
+                      <div className="shrink-0">
+                        {isDownloaded ? (
+                          <div className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
+                            Installed
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => onDownload(model.name)}
+                            disabled={isDownloading || !canDownload}
+                            className={`rounded-full px-4 py-2 text-xs font-medium transition-colors ${
+                              !canDownload
+                                ? "cursor-not-allowed bg-white/5 text-white/25"
+                                : isDownloading
+                                  ? "cursor-wait bg-white/10 text-white/70"
+                                  : "border border-white/20 bg-white/5 text-white hover:bg-white/15"
+                            }`}
                           >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                          Installed
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => onDownload(model.name)}
-                          disabled={isDownloading || !canDownload}
-                          className={`relative px-5 py-2 rounded-full text-xs font-medium transition-all duration-200 ${
-                            !canDownload
-                              ? "bg-white/5 text-white/20 cursor-not-allowed"
-                              : isDownloading
-                                ? "bg-white/10 text-white/80 cursor-wait pl-9"
-                                : "bg-white/10 text-white hover:bg-white/20 hover:text-white border border-white/5"
-                          }`}
-                        >
-                          {isDownloading && (
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2">
-                              <svg
-                                className="w-3 h-3 animate-spin text-white/60"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                              >
-                                <circle
-                                  className="opacity-25"
-                                  cx="12"
-                                  cy="12"
-                                  r="10"
-                                  stroke="currentColor"
-                                  strokeWidth="4"
-                                ></circle>
-                                <path
-                                  className="opacity-75"
-                                  fill="currentColor"
-                                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                ></path>
-                              </svg>
-                            </span>
-                          )}
-                          {isDownloading
-                            ? typeof progressPercent === "number"
-                              ? `Downloading ${Math.round(progressPercent)}%`
-                              : "Downloading..."
-                            : !canDownload
-                              ? "Unavailable"
-                              : "Download"}
-                        </button>
-                      )}
+                            {isDownloading
+                              ? typeof progressPercent === "number"
+                                ? `Downloading ${Math.round(progressPercent)}%`
+                                : "Downloading..."
+                              : !canDownload
+                                ? "Unavailable"
+                                : "Download"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </motion.div>
                 );
@@ -643,12 +640,10 @@ function ModelManager() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* Footer / Status Bar */}
-      <div className="border-t border-white/5 pt-4 mt-2 text-[10px] text-white/20 flex justify-between uppercase tracking-wider font-medium">
-        <span>OpenWispr Desktop Alpha</span>
-        <span>Local Processing Only</span>
+        <div className="mt-4 border-t border-white/10 pt-3 text-[10px] uppercase tracking-[0.16em] text-white/30">
+          OpenWispr Desktop Alpha
+        </div>
       </div>
     </div>
   );
