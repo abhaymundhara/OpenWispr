@@ -1,0 +1,370 @@
+use crate::{
+    is_mlx_model_name, AudioFormat, Result, SttConfig, SttError, TranscriptSegment, Transcription,
+    MLX_PARAKEET_V2_MODEL,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tokio::sync::RwLock;
+
+use std::sync::Arc;
+
+use super::backend::{prepare_audio, TARGET_SAMPLE_RATE};
+
+const PYTHON_BIN: &str = "python3";
+
+#[derive(Default)]
+struct MlxState {
+    config: Option<SttConfig>,
+    model_ref: Option<String>,
+}
+
+pub(crate) struct SharedMlxParakeetAdapter {
+    state: Arc<RwLock<MlxState>>,
+}
+
+impl SharedMlxParakeetAdapter {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: Arc::new(RwLock::new(MlxState::default())),
+        }
+    }
+
+    pub(crate) async fn initialize(&self, config: SttConfig) -> Result<()> {
+        let model_ref = resolve_model_ref(&config)?;
+        let cache_dir = mlx_cache_dir()?;
+
+        tokio::task::spawn_blocking({
+            let model_ref = model_ref.clone();
+            let cache_dir = cache_dir.clone();
+            move || ensure_parakeet_ready(&model_ref, &cache_dir)
+        })
+        .await
+        .map_err(|e| SttError::ModelLoadError(format!("mlx setup task failed: {e}")))??;
+
+        let marker = marker_file_path(&model_ref)?;
+        if let Some(parent) = marker.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                SttError::ModelLoadError(format!(
+                    "failed to create mlx marker directory {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+        fs::write(&marker, b"ready").map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "failed to write mlx marker {}: {e}",
+                marker.display()
+            ))
+        })?;
+
+        let mut state = self.state.write().await;
+        state.model_ref = Some(model_ref);
+        state.config = Some(config);
+        Ok(())
+    }
+
+    pub(crate) async fn transcribe(
+        &self,
+        audio_data: &[f32],
+        format: AudioFormat,
+    ) -> Result<Transcription> {
+        let model_ref = {
+            let state = self.state.read().await;
+            state
+                .model_ref
+                .clone()
+                .ok_or_else(|| SttError::TranscriptionFailed("mlx adapter not initialized".into()))?
+        };
+
+        let prepared = prepare_audio(audio_data, &format);
+        if prepared.is_empty() {
+            return Err(SttError::AudioError(
+                "no audio samples available after preprocessing".into(),
+            ));
+        }
+
+        let duration_s = prepared.len() as f64 / TARGET_SAMPLE_RATE as f64;
+        let cache_dir = mlx_cache_dir()?;
+        let text = tokio::task::spawn_blocking(move || {
+            let temp_wav = temp_wav_path();
+            write_mono_wav(&temp_wav, &prepared, TARGET_SAMPLE_RATE)?;
+            let result = run_mlx_transcription(&model_ref, &cache_dir, &temp_wav);
+            let _ = fs::remove_file(&temp_wav);
+            result
+        })
+        .await
+        .map_err(|e| SttError::TranscriptionFailed(format!("mlx decode task failed: {e}")))??;
+
+        let clean = text.trim().to_string();
+        let mut segments = Vec::new();
+        if !clean.is_empty() {
+            segments.push(TranscriptSegment {
+                text: clean.clone(),
+                start: 0.0,
+                end: duration_s,
+            });
+        }
+
+        Ok(Transcription {
+            text: clean,
+            language: Some("en".to_string()),
+            confidence: None,
+            segments,
+        })
+    }
+
+    pub(crate) async fn is_model_available(&self, model_name: &str) -> bool {
+        if !is_mlx_model_name(model_name) {
+            return false;
+        }
+        marker_file_path(model_name)
+            .map(|path| path.exists())
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn available_models(&self) -> Vec<String> {
+        vec![MLX_PARAKEET_V2_MODEL.to_string()]
+    }
+
+    pub(crate) fn current_model(&self) -> Option<String> {
+        self.state
+            .blocking_read()
+            .config
+            .as_ref()
+            .map(|cfg| cfg.model_name.clone())
+    }
+}
+
+fn resolve_model_ref(config: &SttConfig) -> Result<String> {
+    if let Some(path) = config.model_path.clone() {
+        return Ok(path.to_string_lossy().to_string());
+    }
+
+    if config.model_name.contains('/') {
+        return Ok(config.model_name.clone());
+    }
+
+    Err(SttError::ModelNotFound(format!(
+        "unsupported MLX model '{}', expected a Hugging Face repo id",
+        config.model_name
+    )))
+}
+
+fn ensure_parakeet_ready(model_ref: &str, cache_dir: &Path) -> Result<()> {
+    ensure_python_available()?;
+    ensure_parakeet_package_installed()?;
+
+    let script = r#"
+import sys
+from parakeet_mlx import from_pretrained
+model_ref = sys.argv[1]
+cache_dir = sys.argv[2]
+from_pretrained(model_ref, cache_dir=cache_dir)
+"#;
+
+    let output = Command::new(PYTHON_BIN)
+        .args(["-c", script, model_ref, &cache_dir.to_string_lossy()])
+        .output()
+        .map_err(|e| {
+            SttError::ModelLoadError(format!("failed to start Python for MLX download: {e}"))
+        })?;
+
+    if !output.status.success() {
+        return Err(SttError::ModelLoadError(format!(
+            "failed to download/load MLX model '{}': {}",
+            model_ref,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    Ok(())
+}
+
+fn run_mlx_transcription(model_ref: &str, cache_dir: &Path, wav_path: &Path) -> Result<String> {
+    let script = r#"
+import sys
+from parakeet_mlx import from_pretrained
+
+model_ref = sys.argv[1]
+wav_path = sys.argv[2]
+cache_dir = sys.argv[3]
+
+model = from_pretrained(model_ref, cache_dir=cache_dir)
+result = model.transcribe(wav_path)
+
+text = getattr(result, "text", None)
+if text is None and isinstance(result, dict):
+    text = result.get("text")
+if text is None and hasattr(result, "__dict__"):
+    text = result.__dict__.get("text")
+if text is None:
+    text = str(result)
+print((text or "").strip())
+"#;
+
+    let output = Command::new(PYTHON_BIN)
+        .args([
+            "-c",
+            script,
+            model_ref,
+            &wav_path.to_string_lossy(),
+            &cache_dir.to_string_lossy(),
+        ])
+        .output()
+        .map_err(|e| {
+            SttError::TranscriptionFailed(format!("failed to start Python for MLX transcription: {e}"))
+        })?;
+
+    if !output.status.success() {
+        return Err(SttError::TranscriptionFailed(format!(
+            "MLX transcription failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let text = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .last()
+        .unwrap_or("")
+        .to_string();
+
+    Ok(text)
+}
+
+fn ensure_python_available() -> Result<()> {
+    let output = Command::new(PYTHON_BIN)
+        .arg("--version")
+        .output()
+        .map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "Python is required for MLX Parakeet runtime ({PYTHON_BIN} not found): {e}"
+            ))
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(SttError::ModelLoadError(
+        "Python is required for MLX Parakeet runtime but --version failed".into(),
+    ))
+}
+
+fn ensure_parakeet_package_installed() -> Result<()> {
+    let check = Command::new(PYTHON_BIN)
+        .args(["-c", "import parakeet_mlx"])
+        .output()
+        .map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "failed to probe parakeet-mlx Python package: {e}"
+            ))
+        })?;
+    if check.status.success() {
+        return Ok(());
+    }
+
+    let install = Command::new(PYTHON_BIN)
+        .args(["-m", "pip", "install", "--upgrade", "parakeet-mlx"])
+        .output()
+        .map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "failed to install parakeet-mlx with pip: {e}"
+            ))
+        })?;
+    if install.status.success() {
+        return Ok(());
+    }
+
+    Err(SttError::ModelLoadError(format!(
+        "failed to install parakeet-mlx: {}",
+        String::from_utf8_lossy(&install.stderr).trim()
+    )))
+}
+
+fn marker_file_path(model_ref: &str) -> Result<PathBuf> {
+    Ok(mlx_cache_dir()?
+        .join(".downloaded")
+        .join(sanitize_model_ref(model_ref))
+        .join("ready"))
+}
+
+fn sanitize_model_ref(model_ref: &str) -> String {
+    model_ref
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn mlx_cache_dir() -> Result<PathBuf> {
+    Ok(base_model_cache_dir()?.join("mlx"))
+}
+
+fn base_model_cache_dir() -> Result<PathBuf> {
+    if let Ok(override_dir) = std::env::var("OPENWISPR_MODEL_DIR") {
+        if !override_dir.trim().is_empty() {
+            return Ok(PathBuf::from(override_dir));
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            return Ok(PathBuf::from(home)
+                .join(".cache")
+                .join("openwispr")
+                .join("models"));
+        }
+    }
+
+    Err(SttError::ModelLoadError(
+        "unable to determine model cache directory".into(),
+    ))
+}
+
+fn temp_wav_path() -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "openwispr-mlx-{}-{}.wav",
+        std::process::id(),
+        stamp
+    ))
+}
+
+fn write_mono_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<()> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+
+    let mut writer = hound::WavWriter::create(path, spec).map_err(|e| {
+        SttError::AudioError(format!("failed to create temporary wav {}: {e}", path.display()))
+    })?;
+
+    for sample in samples {
+        let scaled = (sample * i16::MAX as f32).clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+        writer.write_sample(scaled).map_err(|e| {
+            SttError::AudioError(format!("failed to write temporary wav {}: {e}", path.display()))
+        })?;
+    }
+
+    writer.finalize().map_err(|e| {
+        SttError::AudioError(format!(
+            "failed to finalize temporary wav {}: {e}",
+            path.display()
+        ))
+    })?;
+    Ok(())
+}
