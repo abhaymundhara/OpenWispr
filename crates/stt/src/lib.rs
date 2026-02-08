@@ -7,6 +7,17 @@ use thiserror::Error;
 
 pub mod adapters;
 
+pub const SHERPA_PARAKEET_INT8_MODEL: &str = "sherpa-onnx/parakeet-tdt-0.6b-v2-int8";
+pub const MLX_PARAKEET_V2_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v2";
+
+pub fn is_sherpa_model_name(model_name: &str) -> bool {
+    model_name == SHERPA_PARAKEET_INT8_MODEL
+}
+
+pub fn is_mlx_model_name(model_name: &str) -> bool {
+    model_name == MLX_PARAKEET_V2_MODEL
+}
+
 /// STT-specific errors
 #[derive(Debug, Error)]
 pub enum SttError {
