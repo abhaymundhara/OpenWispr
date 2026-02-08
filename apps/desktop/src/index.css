@@ -151,7 +151,14 @@
 
 :root,
 html {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --ow-font-body:
+    "Avenir Next", "Suisse Intl", "Neue Haas Grotesk Text Pro", "IBM Plex Sans",
+    "Segoe UI", sans-serif;
+  --ow-font-display:
+    "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Times New Roman",
+    serif;
+
+  font-family: var(--ow-font-body);
   line-height: 1.5;
   font-weight: 400;
 
@@ -163,6 +170,11 @@ html {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.ow-display {
+  font-family: var(--ow-font-display);
+  letter-spacing: -0.02em;
 }
 
 #root {
