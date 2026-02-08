@@ -469,7 +469,13 @@ function DictationPillApp() {
   const [sttStatus, setSttStatus] = useState<TranscriptionStatus>("idle");
   const [sttError, setSttError] = useState<string>();
   const previousFnHeld = useRef(false);
+  const fnHeldRef = useRef(false);
   const { playStartSound, playStopSound } = useFeedbackSounds(true);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    fnHeldRef.current = fnHeld;
+  }, [fnHeld]);
 
   useEffect(() => {
     let unlistenHold: (() => void) | undefined;
@@ -501,7 +507,7 @@ function DictationPillApp() {
             }
 
             // Hide window when transcription is complete (status becomes idle)
-            if (event.payload.status === "idle" && !fnHeld) {
+            if (event.payload.status === "idle" && !fnHeldRef.current) {
               // Small delay to ensure paste completes before hiding
               setTimeout(() => {
                 appWindow.hide().catch(console.error);
