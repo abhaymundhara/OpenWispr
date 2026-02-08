@@ -238,6 +238,28 @@ const FloatingPill = ({
   );
 };
 
+const CleanButton = ({
+  onClick,
+  disabled,
+  className,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    className={`inline-flex h-8 items-center justify-center rounded-lg px-3 text-[13px] font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-white/10 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
+      className || ""
+    }`}
+  >
+    {children}
+  </button>
+);
+
 function ModelManager() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -307,7 +329,7 @@ function ModelManager() {
         percent: 0,
         done: false,
         error: undefined,
-        message: "Queued for download",
+        message: "Queued",
       },
     }));
     try {
@@ -332,12 +354,9 @@ function ModelManager() {
 
   const downloadedModels = models.filter((m) => m.downloaded);
   const activeModelInfo = models.find((m) => m.name === activeModel);
-  const downloadableCount = models.filter(
-    (m) => !m.downloaded && m.can_download,
-  ).length;
-  const buttonBaseClass =
-    "inline-flex h-9 items-center justify-center rounded-full px-4 text-[12px] font-semibold tracking-[0.01em] transition-colors";
+  const libraryModels = models.filter((m) => !m.downloaded && m.can_download);
 
+  // Tab Component
   const TabButton = ({
     active,
     onClick,
@@ -349,74 +368,59 @@ function ModelManager() {
   }) => (
     <button
       onClick={onClick}
-      className={`relative h-9 rounded-full px-5 text-[12px] font-semibold tracking-[0.01em] transition-colors duration-200 ${
-        active
-          ? "text-white"
-          : "text-white/45 hover:bg-white/[0.04] hover:text-white/75"
+      className={`relative px-4 py-1.5 text-[13px] font-medium transition-colors duration-300 ${
+        active ? "text-white" : "text-white/40 hover:text-white/60"
       }`}
     >
       {active && (
         <motion.div
-          layoutId="activeTab"
-          className="absolute inset-0 rounded-full border border-white/15 bg-white/10"
-          transition={{ type: "spring", stiffness: 500, damping: 30 }}
+          layoutId="activeTabIndicator"
+          className="absolute inset-0 -z-10 rounded-full bg-white/10"
+          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
         />
       )}
-      <span className="relative z-10">{children}</span>
+      {children}
     </button>
   );
 
-  const StatusBadge = ({ type }: { type: "whisper" | "stt" | string }) => {
-    const isWhisper = type.toLowerCase().includes("whisper");
-    return (
-      <span
-        className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
-          isWhisper
-            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
-            : "border-blue-500/20 bg-blue-500/10 text-blue-400"
-        }`}
-      >
-        {type.toUpperCase()}
-      </span>
-    );
-  };
-
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#09090b] text-white/90">
-      <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-8 pb-6 pt-7 font-sans select-none">
-        <div className="mb-7 flex items-start justify-between">
-          <div className="space-y-2">
-            <h1 className="text-[36px] font-light leading-none tracking-tight text-white">
-              Models
-            </h1>
-            <p className="text-[14px] text-white/50">
-              Manage your local speech engines
-            </p>
-          </div>
-          <button
-            onClick={loadModels}
-            disabled={loading}
-            className="rounded-full border border-white/10 p-2.5 text-white/45 transition-all hover:bg-white/[0.05] hover:text-white disabled:cursor-wait disabled:opacity-50"
-            title="Refresh models"
-          >
-            <svg
-              className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-          </button>
-        </div>
+    <div className="flex h-screen w-screen flex-col bg-[#030303] text-[#EDEDED] selection:bg-indigo-500/20">
+      {/* Subtle Background Gradients */}
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div className="absolute -left-[20%] -top-[20%] h-[600px] w-[600px] rounded-full bg-indigo-500/5 blur-[120px]" />
+        <div className="absolute -bottom-[20%] -right-[20%] h-[600px] w-[600px] rounded-full bg-blue-500/5 blur-[120px]" />
+      </div>
 
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <div className="inline-flex rounded-full border border-white/10 bg-white/[0.03] p-1">
+      {/* Header Area */}
+      <div className="relative z-10 border-b border-white/[0.04] bg-[#030303]/80 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-white/10 to-white/5 shadow-inner ring-1 ring-white/10">
+              <svg
+                className="h-5 w-5 text-white/90"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-[15px] font-medium leading-none tracking-tight text-white/90">
+                Voice Models
+              </h1>
+              <p className="mt-1 text-[13px] text-white/40">
+                Local speech recognition engines
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-full bg-white/[0.03] p-1 ring-1 ring-white/[0.04]">
             <TabButton
               active={tab === "downloaded"}
               onClick={() => setTab("downloaded")}
@@ -430,221 +434,172 @@ function ModelManager() {
               Library
             </TabButton>
           </div>
-          <div className="hidden text-[12px] text-white/45 sm:block">
-            Active:{" "}
-            <span className="font-medium text-white/75">
-              {activeModelInfo?.name ?? "None selected"}
-            </span>
-          </div>
         </div>
+      </div>
 
-        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
-              Installed
-            </p>
-            <p className="mt-1 text-[24px] font-medium leading-none text-white">
-              {downloadedModels.length}
-            </p>
-          </div>
-          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
-              Available To Download
-            </p>
-            <p className="mt-1 text-[24px] font-medium leading-none text-white">
-              {downloadableCount}
-            </p>
-          </div>
-          <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
-              Active Engine
-            </p>
-            <p className="mt-1 truncate text-[13px] font-medium text-white/85">
-              {activeModelInfo?.name ?? "Not set"}
-            </p>
-          </div>
-        </div>
-
-        <AnimatePresence>
+      {/* Main Content */}
+      <div className="relative z-10 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-6 py-8">
           {error && (
             <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="mb-4 rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/10 bg-red-500/5 p-4 text-red-200/90 shadow-lg shadow-red-500/5"
             >
-              <div className="text-xs uppercase tracking-[0.14em] text-red-200/80">
-                Model Error
-              </div>
-              <div className="mt-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-100/90">
-                {error}
-              </div>
+              <svg className="mt-0.5 h-4 w-4 shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="text-[13px] leading-relaxed">{error}</p>
             </motion.div>
           )}
-        </AnimatePresence>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          {loading && models.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-white/35">
-              <span className="loading-dot mb-3" />
-              <span className="text-sm">Loading model catalog...</span>
-            </div>
-          ) : tab === "downloaded" ? (
-            downloadedModels.length === 0 ? (
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] px-6 py-12 text-center">
-                <p className="text-[15px] text-white/70">No models installed yet.</p>
-                <button
-                  onClick={() => setTab("library")}
-                  className={`${buttonBaseClass} mt-4 border border-white/15 text-white/85 hover:bg-white/[0.06]`}
-                >
-                  Browse library
-                </button>
+          <div className="space-y-3">
+            {loading && models.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-32 text-white/20">
+                <span className="loading-dot mb-4 h-1.5 w-1.5 rounded-full bg-current" />
+                <span className="text-[13px]">Loading models...</span>
+              </div>
+            ) : tab === "downloaded" ? (
+              downloadedModels.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/5 bg-white/[0.01] py-32 text-center">
+                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.03]">
+                    <svg className="h-6 w-6 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 12H4" />
+                    </svg>
+                  </div>
+                  <p className="text-[14px] font-medium text-white/50">No models installed</p>
+                  <button onClick={() => setTab("library")} className="mt-4 text-[13px] font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
+                    Browse Library &rarr;
+                  </button>
+                </div>
+              ) : (
+                downloadedModels.map((model) => (
+                  <ModelCard
+                    key={model.name}
+                    model={model}
+                    isActive={activeModel === model.name}
+                    onAction={() => onSelectModel(model.name)}
+                    actionLabel={activeModel === model.name ? "Active" : "Activate"}
+                    actionDisabled={activeModel === model.name}
+                  />
+                ))
+              )
+            ) : libraryModels.length === 0 ? (
+              <div className="py-20 text-center text-[13px] text-white/30">
+                No new models available.
               </div>
             ) : (
-              <AnimatePresence mode="popLayout">
-                <div className="space-y-3 pb-4">
-                  {downloadedModels.map((model) => {
-                    const isSelected = activeModel === model.name;
-                    return (
-                      <motion.div
-                        layout
-                        key={model.name}
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: 6 }}
-                        className={`rounded-2xl border px-5 py-4 transition-colors ${
-                          isSelected
-                            ? "border-emerald-400/35 bg-emerald-400/[0.08]"
-                            : "border-white/[0.08] bg-white/[0.025]"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <p className="truncate text-[15px] font-medium text-white">
-                                {model.name}
-                              </p>
-                              <StatusBadge type={model.runtime} />
-                            </div>
-                            <div className="text-[12px] text-white/45">
-                              Size: {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => onSelectModel(model.name)}
-                            disabled={isSelected}
-                            className={`${buttonBaseClass} shrink-0 ${
-                              isSelected
-                                ? "cursor-default bg-white/10 text-white/60"
-                                : "border border-white/20 bg-white/5 text-white hover:bg-white/15"
-                            }`}
-                          >
-                            {isSelected ? "Active" : "Set Active"}
-                          </button>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              </AnimatePresence>
-            )
-          ) : (
-            <div className="space-y-3 pb-4">
-              {models.map((model, idx) => {
-                const isDownloading = activeDownload === model.name;
-                const isDownloaded = model.downloaded;
-                const canDownload = model.can_download;
-                const progress = downloadProgress[model.name];
-                const progressPercent =
-                  typeof progress?.percent === "number"
-                    ? Math.max(0, Math.min(100, progress.percent))
-                    : undefined;
-                const progressText = progress?.message || "Downloading model";
+              libraryModels.map((model) => (
+                <ModelCard
+                  key={model.name}
+                  model={model}
+                  isDownloading={activeDownload === model.name}
+                  downloadProgress={downloadProgress[model.name]}
+                  onAction={() => onDownload(model.name)}
+                  actionLabel={activeDownload === model.name ? "Downloading" : "Download"}
+                  actionDisabled={!!activeDownload}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-                return (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.02 }}
-                    key={model.name}
-                    className="rounded-2xl border border-white/[0.08] bg-white/[0.025] px-5 py-4"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <p className="truncate text-[14px] font-medium text-white/90">
-                            {model.name}
-                          </p>
-                          <StatusBadge type={model.runtime} />
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-[12px] text-white/45">
-                          <span>
-                            Size: {MODEL_SIZE_HINTS[model.name] || "Unknown"}
-                          </span>
-                          {model.note && (
-                            <>
-                              <span>•</span>
-                              <span>{model.note}</span>
-                            </>
-                          )}
-                        </div>
-                        {isDownloading && (
-                          <div className="w-[290px] max-w-full pt-1">
-                            <div className="mb-1 flex items-center justify-between text-[11px] text-white/50">
-                              <span className="truncate pr-2">{progressText}</span>
-                              <span className="tabular-nums">
-                                {typeof progressPercent === "number"
-                                  ? `${Math.round(progressPercent)}%`
-                                  : "--"}
-                              </span>
-                            </div>
-                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                              <div
-                                className="h-full rounded-full bg-emerald-400 transition-all duration-200"
-                                style={{ width: `${progressPercent ?? 10}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
+function ModelCard({
+  model,
+  isActive,
+  isDownloading,
+  downloadProgress,
+  onAction,
+  actionLabel,
+  actionDisabled,
+}: {
+  model: ModelInfo;
+  isActive?: boolean;
+  isDownloading?: boolean;
+  downloadProgress?: ModelDownloadProgressEvent;
+  onAction: () => void;
+  actionLabel: React.ReactNode;
+  actionDisabled?: boolean;
+}) {
+  const percent =
+    typeof downloadProgress?.percent === "number"
+      ? Math.max(0, Math.min(100, downloadProgress.percent))
+      : 0;
 
-                      <div className="shrink-0">
-                        {isDownloaded ? (
-                          <div className={`${buttonBaseClass} border border-emerald-400/25 bg-emerald-400/10 text-emerald-300`}>
-                            Installed
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => onDownload(model.name)}
-                            disabled={isDownloading || !canDownload}
-                            className={`${buttonBaseClass} ${
-                              !canDownload
-                                ? "cursor-not-allowed bg-white/5 text-white/25"
-                                : isDownloading
-                                  ? "cursor-wait bg-white/10 text-white/70"
-                                  : "border border-white/20 bg-white/5 text-white hover:bg-white/15"
-                            }`}
-                          >
-                            {isDownloading
-                              ? typeof progressPercent === "number"
-                                ? `Downloading ${Math.round(progressPercent)}%`
-                                : "Downloading..."
-                              : !canDownload
-                                ? "Unavailable"
-                                : "Download"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
+  return (
+    <div
+      className={`group relative overflow-hidden rounded-xl border transition-all duration-300 ${
+        isActive
+          ? "border-indigo-500/20 bg-indigo-500/[0.04]"
+          : "border-white/[0.03] bg-white/[0.01] hover:border-white/[0.08] hover:bg-white/[0.03]"
+      }`}
+    >
+      {/* Slim Progress Bar at Bottom */}
+      {isDownloading && (
+        <div className="absolute bottom-0 left-0 h-[2px] w-full bg-white/5">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${percent}%` }}
+            className="h-full bg-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.5)]"
+          />
+        </div>
+      )}
+
+      <div className="relative z-10 flex items-center justify-between p-5">
+        <div className="min-w-0 flex-1 pr-6">
+          <div className="flex items-center gap-3">
+            <h3 className={`truncate text-[15px] font-medium tracking-tight ${isActive ? "text-white" : "text-white/80"}`}>
+              {model.name}
+            </h3>
+            {isActive && (
+              <div className="flex items-center gap-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.8)]" />
+                <span className="text-[10px] font-medium text-indigo-200">ACTIVE</span>
+              </div>
+            )}
+          </div>
+          
+          <div className="mt-2 flex items-center gap-4 text-[13px] text-white/40">
+            <span className="flex items-center gap-1.5">
+              <span>{MODEL_SIZE_HINTS[model.name] || "Unknown size"}</span>
+            </span>
+            <span className="h-1 w-1 rounded-full bg-white/10" />
+            <span className="flex items-center gap-1.5">
+              <span>{model.runtime}</span>
+            </span>
+            {isDownloading && (
+              <>
+                 <span className="h-1 w-1 rounded-full bg-white/10" />
+                 <span className="text-indigo-300/90 font-medium">
+                  {Math.round(percent)}%
+                 </span>
+              </>
+            )}
+          </div>
         </div>
 
-        <div className="mt-4 border-t border-white/10 pt-3 text-[10px] uppercase tracking-[0.14em] text-white/30">
-          OpenWispr Desktop Alpha
+        <div className="shrink-0">
+          <CleanButton
+            onClick={onAction}
+            disabled={actionDisabled}
+            className={
+              isActive
+                ? "cursor-default text-indigo-300/50"
+                : actionDisabled && !isDownloading
+                  ? "cursor-not-allowed bg-transparent text-white/10"
+                  : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+            }
+          >
+            {isDownloading ? (
+               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+            ) : (
+              actionLabel
+            )}
+          </CleanButton>
         </div>
       </div>
     </div>
