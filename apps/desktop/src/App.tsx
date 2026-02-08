@@ -189,7 +189,7 @@ const FloatingPill = ({
       animate={{ scale: 1, opacity: 1, y: 0 }}
       exit={{ scale: 0.96, opacity: 0, y: 12 }}
       transition={{ type: "spring", damping: 26, stiffness: 340, mass: 0.9 }}
-      className="fixed bottom-0 left-1/2 z-[999999] -translate-x-1/2"
+      className="fixed bottom-2 left-1/2 z-[999999] -translate-x-1/2"
       onClick={() => {
         if (shouldRecord) onStop();
       }}
@@ -507,7 +507,7 @@ function DictationPillApp() {
   const showPill = fnHeld || sttStatus !== "idle";
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center overflow-hidden bg-transparent">
+    <div className="h-screen w-screen flex items-center justify-center overflow-visible bg-transparent">
       <style>{`
         .loading-dot {
           width: 6px;

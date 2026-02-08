@@ -46,7 +46,7 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
             };
 
             #[cfg(target_os = "macos")]
-            let bottom_margin: i32 = 180;
+            let bottom_margin: i32 = 200;
             #[cfg(target_os = "windows")]
             let bottom_margin: i32 = 180;
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
