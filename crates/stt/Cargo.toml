@@ -14,8 +14,9 @@ thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 ureq = { version = "2.10", default-features = true }
-[target.'cfg(target_os = "windows")'.dependencies]
-# whisper-rs is always available on Windows; vulkan is optional acceleration
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# whisper-rs is required by the shared whisper backend on both macOS and Windows.
+# Vulkan remains opt-in via this crate's `vulkan` feature.
 whisper-rs = { version = "0.15", default-features = false }
 
 [features]
