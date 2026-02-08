@@ -338,72 +338,104 @@ fn insert_text_directly(text: &str) {
 }
 
 fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+
     if text.trim().is_empty() {
-        if verbose_logs_enabled() {
-            println!("[paste] skipping empty text");
-        }
+        println!("[paste] skipping empty text");
         return Ok(());
     }
 
-    if verbose_logs_enabled() {
-        println!("[paste] preparing to paste {} chars", text.chars().count());
-    }
+    println!("[paste] preparing to paste {} chars", text.chars().count());
+    let _ = std::io::stdout().flush();
 
-    // The overlay can become the active app while transcribing. Move focus back
-    // to the app that was active at Fn press before injecting text.
-    restore_active_paste_target();
-
+    // ── Step 1: Clipboard work while our app is still active ──
     let mut clipboard = match Clipboard::new() {
         Ok(clipboard) => clipboard,
         Err(err) => {
-            if verbose_logs_enabled() {
-                eprintln!(
-                    "[paste] clipboard unavailable, falling back to direct typing: {}",
-                    err
-                );
-            }
+            eprintln!("[paste] clipboard unavailable, falling back to direct typing: {}", err);
+            restore_active_paste_target();
             insert_text_directly(text);
             return Ok(());
         }
     };
-    
-    if verbose_logs_enabled() {
-        println!("[paste] clipboard acquired, capturing current state");
-    }
+
+    println!("[paste] clipboard acquired, saving snapshot");
+    let _ = std::io::stdout().flush();
     let snapshot = capture_clipboard(&mut clipboard);
 
-    if let ClipboardSnapshot::OpaqueOrEmpty = snapshot {
-        if verbose_logs_enabled() {
-            println!("[paste] clipboard empty/opaque, using direct text insertion");
-        }
-        insert_text_directly(text);
-        return Ok(());
-    }
-
     if let Err(err) = clipboard.set_text(text.to_string()) {
-        if verbose_logs_enabled() {
-            eprintln!(
-                "[paste] failed to set clipboard text, falling back to direct typing: {}",
-                err
-            );
-        }
+        eprintln!("[paste] failed to set clipboard: {}", err);
+        restore_active_paste_target();
         insert_text_directly(text);
         return Ok(());
     }
 
-    if verbose_logs_enabled() {
-        println!("[paste] text copied to clipboard, triggering paste shortcut");
+    println!("[paste] clipboard loaded with transcription text");
+    let _ = std::io::stdout().flush();
+
+    // ── Step 2: Focus target + Cmd+V in ONE osascript call ──
+    // CRITICAL: After we give focus to another app, macOS may kill our
+    // Accessory-policy process during any thread::sleep. By doing the
+    // focus switch AND the keystroke inside a single osascript invocation,
+    // the paste happens in a separate process that survives even if we die.
+    #[cfg(target_os = "macos")]
+    {
+        let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
+        if let Some(target) = target {
+            println!("[paste] osascript: focus pid={} + Cmd+V", target.pid);
+            let _ = std::io::stdout().flush();
+
+            let script = format!(
+                r#"tell application "System Events"
+    set frontmost of (first application process whose unix id is {}) to true
+    delay 0.08
+    keystroke "v" using command down
+end tell"#,
+                target.pid
+            );
+
+            let result = Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .status();
+
+            match result {
+                Ok(status) if status.success() => {
+                    println!("[paste] osascript paste completed successfully");
+                    let _ = std::io::stdout().flush();
+                }
+                Ok(status) => {
+                    eprintln!("[paste] osascript exited with status: {}", status);
+                }
+                Err(err) => {
+                    eprintln!("[paste] osascript failed: {}", err);
+                }
+            }
+        } else {
+            // No saved target — fall back to enigo
+            println!("[paste] no target app, using enigo paste");
+            let _ = std::io::stdout().flush();
+            thread::sleep(Duration::from_millis(50));
+            trigger_paste_shortcut();
+        }
     }
-    // Let clipboard managers receive the new value before pasting.
-    thread::sleep(Duration::from_millis(35));
-    trigger_paste_shortcut();
-    // Let target app consume Cmd/Ctrl+V before restoring clipboard.
-    thread::sleep(Duration::from_millis(110));
-    
-    if verbose_logs_enabled() {
-        println!("[paste] restoring original clipboard content");
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        restore_active_paste_target();
+        thread::sleep(Duration::from_millis(50));
+        trigger_paste_shortcut();
     }
+
+    // ── Step 3: Restore clipboard ──
+    // Give the target app a moment to consume the paste
+    thread::sleep(Duration::from_millis(80));
+    println!("[paste] restoring original clipboard");
+    let _ = std::io::stdout().flush();
     restore_clipboard(&mut clipboard, snapshot);
+
+    println!("[paste] paste completed successfully");
+    let _ = std::io::stdout().flush();
 
     Ok(())
 }
@@ -896,10 +928,7 @@ pub async fn stop_recording_for_capture(
             emit_transcription_status(&app, "error", Some(message.clone()));
             // Recover into idle so the next dictation cycle can proceed.
             emit_transcription_status(&app, "idle", None);
-            if let Some(window) = app.get_window("main") {
-                let _ = window.hide();
-            // Let UI hide window   println!("[stt] error recovery complete, adapter still loaded for next run");
-            }
+            println!("[stt] error recovery complete, adapter still loaded for next run");
             Err(message)
         }
     }

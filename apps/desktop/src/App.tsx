@@ -506,13 +506,10 @@ function DictationPillApp() {
               setSttError(undefined);
             }
 
-            // Hide window when transcription is complete (status becomes idle)
-            if (event.payload.status === "idle" && !fnHeldRef.current) {
-              // Delay to ensure paste operation completes on its dedicated thread
-              setTimeout(() => {
-                appWindow.hide().catch(console.error);
-              }, 300);
-            }
+            // NOTE: Do NOT hide the window here. The main window is transparent
+            // and ignores cursor events, so it's effectively invisible when the
+            // pill is not shown. Hiding it causes macOS to deactivate our
+            // Accessory-policy app, which can terminate the process.
           },
         );
       } catch (e) {
