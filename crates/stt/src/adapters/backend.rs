@@ -483,9 +483,16 @@ fn download_model(model_name: &str, output_path: &Path) -> Result<()> {
     let filename = model_filename(model_name);
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");
 
+    eprintln!("📥 Starting download of {} from {}", model_name, url);
+    eprintln!("📁 Saving to: {}", output_path.display());
+
     let response = ureq::get(&url)
         .call()
-        .map_err(|e| SttError::ModelLoadError(format!("failed to download {url}: {e}")))?;
+        .map_err(|e| {
+            let err_msg = format!("failed to download {url}: {e}");
+            eprintln!("❌ Download error: {}", err_msg);
+            SttError::ModelLoadError(err_msg)
+        })?
     let mut reader = response.into_reader();
 
     let tmp_path = output_path.with_extension("download");
@@ -497,12 +504,14 @@ fn download_model(model_name: &str, output_path: &Path) -> Result<()> {
     })?;
     let mut writer = BufWriter::new(file);
 
-    io::copy(&mut reader, &mut writer).map_err(|e| {
-        SttError::ModelLoadError(format!(
-            "failed while writing model {}: {e}",
-            output_path.display()
-        ))
+    eprintln!("⏳ Downloading... (this may take several minutes)");
+    let bytes_copied = io::copy(&mut reader, &mut writer).map_err(|e| {
+        let err_msg = format!("failed while writing model {}: {e}", output_path.display());
+        eprintln!("❌ Write error: {}", err_msg);
+        SttError::ModelLoadError(err_msg)
     })?;
+    eprintln!("✅ Downloaded {} bytes", bytes_copied);
+    
     writer.flush().map_err(|e| {
         SttError::ModelLoadError(format!(
             "failed to flush downloaded model {}: {e}",
@@ -516,6 +525,7 @@ fn download_model(model_name: &str, output_path: &Path) -> Result<()> {
             output_path.display()
         ))
     })?;
+    eprintln!("✅ Model download complete!");
     Ok(())
 }
 
