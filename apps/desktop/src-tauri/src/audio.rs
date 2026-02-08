@@ -13,6 +13,7 @@ use std::time::Duration;
 use stt::{create_adapter, AudioFormat as SttAudioFormat, SttAdapter, SttConfig};
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex as AsyncMutex;
+use crate::logger::{log_info, log_error, SessionLogger};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, IsWindow, SetForegroundWindow,
@@ -34,6 +35,7 @@ pub struct AudioCapture {
     format: Arc<Mutex<SttAudioFormat>>,
     stt_adapter: Arc<AsyncMutex<Option<Box<dyn SttAdapter>>>>,
     loaded_model: Arc<AsyncMutex<Option<String>>>,
+    session_logger: Arc<Mutex<Option<SessionLogger>>>,
 }
 
 impl AudioCapture {
@@ -44,6 +46,7 @@ impl AudioCapture {
             format: Arc::new(Mutex::new(SttAudioFormat::default())),
             stt_adapter: Arc::new(AsyncMutex::new(None)),
             loaded_model: Arc::new(AsyncMutex::new(None)),
+            session_logger: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -56,6 +59,7 @@ impl Clone for AudioCapture {
             format: self.format.clone(),
             stt_adapter: self.stt_adapter.clone(),
             loaded_model: self.loaded_model.clone(),
+            session_logger: self.session_logger.clone(),
         }
     }
 }
@@ -189,6 +193,29 @@ fn capture_active_paste_target() {}
 
 pub fn remember_active_paste_target() {
     capture_active_paste_target();
+}
+
+#[cfg(target_os = "macos")]
+fn get_paste_target_description() -> String {
+    paste_target_slot()
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|t| format!("macOS app '{}' (PID: {})", t.name, t.pid)))
+        .unwrap_or_else(|| "unknown target".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn get_paste_target_description() -> String {
+    paste_target_slot()
+        .lock()
+        .ok()
+        .and_then(|slot| slot.map(|hwnd| format!("Windows HWND 0x{:X}", hwnd as usize)))
+        .unwrap_or_else(|| "unknown target".to_string())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn get_paste_target_description() -> String {
+    "unknown target".to_string()
 }
 
 #[cfg(target_os = "macos")]
@@ -530,6 +557,12 @@ pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Re
         return Ok(());
     }
 
+    // Create new session logger
+    {
+        let mut logger_guard = capture.session_logger.lock().unwrap();
+        *logger_guard = Some(SessionLogger::new());
+    }
+
     // Get the default audio host
     let host = cpal::default_host();
 
@@ -540,12 +573,13 @@ pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Re
     let config = device
         .default_input_config()
         .map_err(|e| format!("Failed to get input config: {}", e))?;
-    println!(
-        "[audio] input format sample_rate={} channels={} sample_format={:?}",
+    
+    log_info(&format!(
+        "Audio input initialized: {}Hz, {} channels, format={:?}",
         config.sample_rate().0,
         config.channels(),
         config.sample_format()
-    );
+    ));
 
     // Reset buffered samples and capture format for the next transcription run.
     {
@@ -661,6 +695,11 @@ pub async fn stop_recording_for_capture(
         return Ok(());
     }
 
+    // Get the session logger
+    let logger: Option<SessionLogger> = {
+        capture.session_logger.lock().unwrap().clone()
+    };
+
     emit_transcription_status(&app, "processing", None);
 
     let audio_data = {
@@ -669,7 +708,10 @@ pub async fn stop_recording_for_capture(
     };
 
     if audio_data.is_empty() {
-        println!("[stt] no audio captured, skipping transcription");
+        if let Some(ref logger) = logger {
+            logger.log_audio_empty();
+        }
+        log_error("No audio captured, skipping transcription");
         emit_transcription_status(&app, "idle", None);
         return Ok(());
     }
@@ -678,6 +720,23 @@ pub async fn stop_recording_for_capture(
         let format = capture.format.lock().unwrap();
         format.clone()
     };
+    
+    // Log audio capture details
+    let audio_seconds = if format.sample_rate > 0 && format.channels > 0 {
+        audio_data.len() as f32 / format.sample_rate as f32 / format.channels as f32
+    } else {
+        0.0
+    };
+    
+    if let Some(ref logger) = logger {
+        logger.log_audio_capture(
+            audio_data.len(),
+            audio_seconds,
+            format.sample_rate,
+            format.channels
+        );
+    }
+    
     let target_model = crate::models::active_model_value();
     let mut adapter_guard = capture.stt_adapter.lock().await;
     let mut loaded_model_guard = capture.loaded_model.lock().await;
@@ -691,7 +750,11 @@ pub async fn stop_recording_for_capture(
             .await
             .map_err(|e| e.to_string())?;
         *adapter_guard = Some(adapter);
-        *loaded_model_guard = Some(target_model);
+        *loaded_model_guard = Some(target_model.clone());
+        
+        if let Some(ref logger) = logger {
+            logger.log_model_load(&target_model);
+        }
     }
     let adapter = adapter_guard
         .as_ref()
@@ -703,56 +766,59 @@ pub async fn stop_recording_for_capture(
         .to_string();
     let (audio_data, format) = match normalize_audio_for_stt_with_ffmpeg(&audio_data, &format) {
         Ok((samples, normalized_format)) => {
-            println!(
-                "[stt] ffmpeg normalization applied samples={} sample_rate={} channels={}",
+            log_info(&format!(
+                "Audio normalized via ffmpeg: {} samples, {}Hz, {} channels",
                 samples.len(),
                 normalized_format.sample_rate,
                 normalized_format.channels
-            );
+            ));
             (samples, normalized_format)
         }
         Err(err) => {
-            eprintln!("[stt] ffmpeg normalization unavailable, using raw capture: {}", err);
+            log_info(&format!("Using raw audio capture (ffmpeg unavailable): {}", err));
             (audio_data, format)
         }
     };
-    let audio_seconds = if format.sample_rate > 0 && format.channels > 0 {
-        audio_data.len() as f32 / format.sample_rate as f32 / format.channels as f32
-    } else {
-        0.0
-    };
-    println!(
-        "[stt] transcription started model={} samples={} duration_s={:.2} sample_rate={} channels={}",
-        model_name,
-        audio_data.len(),
-        audio_seconds,
-        format.sample_rate,
-        format.channels
-    );
+    
+    if let Some(ref logger) = logger {
+        logger.log_transcription_start(&model_name);
+    }
 
     match adapter.transcribe(&audio_data, format).await {
         Ok(result) => {
-            let language = result
-                .language
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string());
-            let confidence = result
-                .confidence
-                .map(|value| format!("{:.3}", value))
-                .unwrap_or_else(|| "n/a".to_string());
-            println!(
-                "[stt] transcription complete model={} language={} confidence={} chars={}",
-                model_name,
-                language,
-                confidence,
-                result.text.chars().count()
-            );
-            println!("[stt] transcript: {}", result.text);
+            if let Some(ref logger) = logger {
+                logger.log_transcription_success(
+                    &result.text,
+                    result.language.as_deref(),
+                    result.confidence
+                );
+            }
 
+            // Get paste target info for logging
+            let paste_target = get_paste_target_description();
+            
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
-                eprintln!("[stt] paste failed: {}", err);
+                if let Some(ref logger) = logger {
+                    logger.log_paste_error(&err);
+                }
+                log_error(&format!("Paste failed: {}", err));
                 emit_transcription_status(&app, "error", Some(err.clone()));
+                
+                // Hide window on error after a delay
+                let app_clone = app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(2));
+                    if let Some(window) = app_clone.get_window("main") {
+                        let _ = window.hide();
+                    }
+                });
+                
                 return Err(err);
+            }
+            
+            if let Some(ref logger) = logger {
+                logger.log_paste_success(&paste_target);
+                logger.log_session_complete();
             }
 
             let _ = app.emit_all(
@@ -765,12 +831,31 @@ pub async fn stop_recording_for_capture(
                 },
             );
             emit_transcription_status(&app, "idle", None);
+            
+            // Hide the main window after transcription
+            if let Some(window) = app.get_window("main") {
+                let _ = window.hide();
+            }
+            
             Ok(())
         }
         Err(err) => {
             let message = err.to_string();
-            eprintln!("[stt] transcription failed: {}", message);
+            if let Some(ref logger) = logger {
+                logger.log_transcription_error(&message);
+            }
+            log_error(&format!("Transcription failed: {}", message));
             emit_transcription_status(&app, "error", Some(message.clone()));
+            
+            // Hide window on error after a delay
+            let app_clone = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(2));
+                if let Some(window) = app_clone.get_window("main") {
+                    let _ = window.hide();
+                }
+            });
+            
             Err(message)
         }
     }

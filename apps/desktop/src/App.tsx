@@ -305,6 +305,16 @@ function ModelManager() {
             <p className="text-zinc-400 text-sm mt-1">
               Download Whisper models locally. These stay on-device.
             </p>
+            {downloadedModels.length > 0 && (
+              <div className="mt-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                <p className="text-blue-300 text-sm font-medium mb-1">
+                  🎮 Hold Ctrl + Shift together to record
+                </p>
+                <p className="text-zinc-400 text-xs">
+                  Press and hold both Ctrl and Shift keys, speak, then release either key to stop and transcribe. Check the console for key detection logs.
+                </p>
+              </div>
+            )}
           </div>
           <button
             className="px-3 py-1.5 text-sm rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
@@ -486,14 +496,7 @@ function DictationPillApp() {
     };
     setupListener();
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "`") {
-        setFnHeld((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
       if (unlistenHold) unlistenHold();
       if (unlistenToggle) unlistenToggle();
       if (unlistenStatus) unlistenStatus();

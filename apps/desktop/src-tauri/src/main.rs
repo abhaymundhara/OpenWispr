@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
-use tauri::{Manager, RunEvent, SystemTray, SystemTrayEvent, Wry};
+use tauri::{Manager, RunEvent, SystemTray, SystemTrayEvent, SystemTrayMenu, CustomMenuItem, Wry};
 
 mod audio;
 #[cfg(target_os = "macos")]
@@ -16,7 +16,9 @@ mod fn_key_macos;
 #[cfg(target_os = "windows")]
 mod fn_key_windows;
 mod models;
+mod logger;
 use audio::AudioCapture;
+use logger::log_session_start;
 
 fn show_models_window(app_handle: &tauri::AppHandle<Wry>) {
     if let Some(window) = app_handle.get_window("models") {
@@ -76,16 +78,46 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
     }
 }
 
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle<Wry>) {
+    show_main_overlay_window(&app);
+}
+
 fn main() {
+    let start_dictation = CustomMenuItem::new("start_dictation".to_string(), "Start Dictation (Hold Ctrl+Fn)");
+    let open_models = CustomMenuItem::new("open_models".to_string(), "Model Manager");
+    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
+    
+    let tray_menu = SystemTrayMenu::new()
+        .add_item(start_dictation)
+        .add_item(open_models)
+        .add_native_item(tauri::SystemTrayMenuItem::Separator)
+        .add_item(quit);
+
     #[cfg(target_os = "macos")]
-    let tray = SystemTray::new().with_icon_as_template(false);
+    let tray = SystemTray::new()
+        .with_icon_as_template(false)
+        .with_menu(tray_menu);
     
     #[cfg(not(target_os = "macos"))]
-    let tray = SystemTray::new();
+    let tray = SystemTray::new().with_menu(tray_menu);
 
     let app = tauri::Builder::default()
         .system_tray(tray)
         .on_system_tray_event(|app_handle, event| match event {
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                "start_dictation" => {
+                    // Just show instructions - actual recording happens via Ctrl+Fn
+                    show_models_window(app_handle);
+                }
+                "open_models" => {
+                    show_models_window(app_handle);
+                }
+                "quit" => {
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
             SystemTrayEvent::LeftClick { .. }
             | SystemTrayEvent::RightClick { .. }
             | SystemTrayEvent::DoubleClick { .. } => {
@@ -110,8 +142,23 @@ fn main() {
             println!("\n==============================================");
             println!("🎙️  OpenWispr Starting...");
             println!("==============================================");
+            #[cfg(target_os = "macos")]
             println!("Press and hold Fn to dictate");
+            #[cfg(target_os = "windows")]
+            {
+                println!("🎮 Hold Ctrl + Shift together to start dictation");
+                println!("   Release either key to stop and transcribe");
+                println!("   All keystrokes are logged to console for debugging");
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            println!("Press Control to toggle dictation");
             println!("==============================================\n");
+
+            // Initialize logging
+            log_session_start();
+
+            // Show models window on startup
+            show_models_window(&handle);
 
             #[cfg(target_os = "macos")]
             {
@@ -182,7 +229,8 @@ fn main() {
             models::list_models,
             models::download_model,
             models::get_active_model,
-            models::set_active_model
+            models::set_active_model,
+            show_main_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
