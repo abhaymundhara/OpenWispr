@@ -18,6 +18,14 @@ mod fn_key_windows;
 mod models;
 use audio::AudioCapture;
 
+fn verbose_logs_enabled() -> bool {
+    std::env::var("OPENWISPR_VERBOSE_LOGS")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
 fn show_models_window(app_handle: &tauri::AppHandle<Wry>) {
     if let Some(window) = app_handle.get_window("models") {
         let _ = window.show();
@@ -100,11 +108,13 @@ fn main() {
                 app.set_activation_policy(ActivationPolicy::Accessory);
             }
 
-            println!("\n==============================================");
-            println!("🎙️  OpenWispr Starting...");
-            println!("==============================================");
-            println!("Press and hold Fn to dictate");
-            println!("==============================================\n");
+            if verbose_logs_enabled() {
+                println!("\n==============================================");
+                println!("🎙️  OpenWispr Starting...");
+                println!("==============================================");
+                println!("Press and hold Fn to dictate");
+                println!("==============================================\n");
+            }
 
             #[cfg(target_os = "macos")]
             {
@@ -183,7 +193,9 @@ fn main() {
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { api, .. } => {
             // Keep the app alive even when no windows are visible.
-            println!("[lifecycle] exit requested - preventing exit");
+            if verbose_logs_enabled() {
+                println!("[lifecycle] exit requested - preventing exit");
+            }
             api.prevent_exit();
         }
         RunEvent::WindowEvent {
@@ -191,14 +203,18 @@ fn main() {
             event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
         } if label == "models" || label == "main" => {
-            println!("[lifecycle] close requested for window '{}' - hiding", label);
+            if verbose_logs_enabled() {
+                println!("[lifecycle] close requested for window '{}' - hiding", label);
+            }
             api.prevent_close();
             if let Some(window) = app_handle.get_window(&label) {
                 let _ = window.hide();
             }
         }
         RunEvent::Exit => {
-            println!("[lifecycle] run loop exiting");
+            if verbose_logs_enabled() {
+                println!("[lifecycle] run loop exiting");
+            }
         }
         _ => {}
     });
