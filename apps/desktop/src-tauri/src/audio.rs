@@ -676,6 +676,9 @@ pub async fn stop_recording_for_capture(
     if audio_data.is_empty() {
         println!("[stt] no audio captured, skipping transcription");
         emit_transcription_status(&app, "idle", None);
+        if let Some(window) = app.get_window("main") {
+            let _ = window.hide();
+        }
         return Ok(());
     }
 
@@ -770,6 +773,9 @@ pub async fn stop_recording_for_capture(
                 },
             );
             emit_transcription_status(&app, "idle", None);
+            if let Some(window) = app.get_window("main") {
+                let _ = window.hide();
+            }
             Ok(())
         }
         Err(err) => {
