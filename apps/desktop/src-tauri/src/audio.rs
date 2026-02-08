@@ -598,12 +598,14 @@ pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Re
     let config = device
         .default_input_config()
         .map_err(|e| format!("Failed to get input config: {}", e))?;
-    println!(
-        "[audio] input format sample_rate={} channels={} sample_format={:?}",
-        config.sample_rate().0,
-        config.channels(),
-        config.sample_format()
-    );
+    if verbose_logs_enabled() {
+        println!(
+            "[audio] input format sample_rate={} channels={} sample_format={:?}",
+            config.sample_rate().0,
+            config.channels(),
+            config.sample_format()
+        );
+    }
 
     // Reset buffered samples and capture format for the next transcription run.
     {
