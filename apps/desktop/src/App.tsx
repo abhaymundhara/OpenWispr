@@ -251,9 +251,9 @@ function Dashboard() {
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_10%,rgba(33,113,102,0.24)_0%,transparent_40%),radial-gradient(circle_at_92%_4%,rgba(183,143,80,0.18)_0%,transparent_35%),linear-gradient(150deg,#0a1115_0%,#111a20_45%,#090d11_100%)]" />
-      <div className="relative flex h-full flex-col md:flex-row">
+      <div className="relative flex h-full flex-col sm:flex-row">
         <aside
-          className="w-full shrink-0 border-b border-[#2A353B]/80 bg-[linear-gradient(180deg,rgba(12,18,23,0.95)_0%,rgba(11,17,21,0.92)_100%)] md:h-full md:w-[18.5rem] md:border-b-0 md:border-r md:border-[#2A353B]/80"
+          className="w-full shrink-0 border-b border-[#2A353B]/80 bg-[linear-gradient(180deg,rgba(12,18,23,0.95)_0%,rgba(11,17,21,0.92)_100%)] sm:h-full sm:w-[16.5rem] sm:border-b-0 sm:border-r sm:border-[#2A353B]/80"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
           <div className="flex h-full flex-col p-4 sm:p-5">
@@ -308,7 +308,7 @@ function Dashboard() {
               </p>
             </div>
 
-            <div className="mt-auto pt-4 text-[0.75rem] leading-relaxed text-[#91A1A5]">
+            <div className="mt-auto hidden pt-4 text-[0.75rem] leading-relaxed text-[#91A1A5] sm:block">
               Hold <span className="rounded bg-[#1A2A31] px-1.5 py-0.5 text-[#DCE8E3]">Fn</span>{" "}
               to dictate in any app.
             </div>
@@ -319,7 +319,8 @@ function Dashboard() {
           className="relative flex-1 overflow-hidden"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <div className="h-full overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+          <div className="h-full overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
+            <div className="mx-auto w-full max-w-5xl">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="mb-2 text-[0.66rem] uppercase tracking-[0.2em] text-[#8EA4A7]">
@@ -383,7 +384,7 @@ function Dashboard() {
               <div className="space-y-4">
                 {currentView === "dashboard" && (
                   <>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
                       {stats.map((stat) => (
                         <div
                           key={stat.label}
@@ -513,6 +514,7 @@ function Dashboard() {
                 )}
               </div>
             )}
+            </div>
           </div>
         </main>
       </div>
@@ -872,12 +874,6 @@ function DictationPillApp() {
   }, []);
 
   useEffect(() => {
-    // Force transparency on mount
-    document.documentElement.style.backgroundColor = "transparent";
-    document.body.style.backgroundColor = "transparent";
-    const root = document.getElementById("root");
-    if (root) root.style.backgroundColor = "transparent";
-
     if (fnHeld && !previousFnHeld.current) {
       playStartSound();
     } else if (!fnHeld && previousFnHeld.current) {
@@ -885,6 +881,19 @@ function DictationPillApp() {
     }
     previousFnHeld.current = fnHeld;
   }, [fnHeld, playStartSound, playStopSound]);
+
+  useEffect(() => {
+    const root = document.getElementById("root");
+    document.documentElement.style.backgroundColor = "transparent";
+    document.body.style.backgroundColor = "transparent";
+    if (root) root.style.backgroundColor = "transparent";
+
+    return () => {
+      document.documentElement.style.backgroundColor = "#090f13";
+      document.body.style.backgroundColor = "#090f13";
+      if (root) root.style.backgroundColor = "#090f13";
+    };
+  }, []);
 
   const showPill = fnHeld || sttStatus !== "idle";
 
@@ -943,12 +952,15 @@ function App() {
     setWindowLabel(appWindow.label);
   }, []);
 
-  if (windowLabel === "dictation_pill") {
-    return <DictationPillApp />;
+  if (!windowLabel) {
+    return null;
   }
 
-  // Default to Dashboard layout
-  return <Dashboard />;
+  if (windowLabel === "models") {
+    return <Dashboard />;
+  }
+
+  return <DictationPillApp />;
 }
 
 export default App;
