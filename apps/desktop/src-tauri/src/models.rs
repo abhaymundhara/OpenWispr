@@ -152,6 +152,30 @@ pub async fn download_model(app: tauri::AppHandle, model: String) -> Result<(), 
             Ok(())
         }
         Err(error) => {
+            let downloaded = create_adapter()
+                .map_err(|e| e.to_string())?
+                .is_model_available(&model)
+                .await;
+            if downloaded {
+                emit_model_download_progress_event(
+                    &app,
+                    ModelDownloadProgressEvent {
+                        model,
+                        stage: "ready".to_string(),
+                        downloaded_bytes: 0,
+                        total_bytes: None,
+                        percent: Some(100.0),
+                        done: true,
+                        error: None,
+                        message: Some(
+                            "Model files downloaded. It will initialize when selected."
+                                .to_string(),
+                        ),
+                    },
+                );
+                return Ok(());
+            }
+
             emit_model_download_progress_event(
                 &app,
                 ModelDownloadProgressEvent {

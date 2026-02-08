@@ -334,11 +334,11 @@ function ModelManager() {
     }));
     try {
       await invoke("download_model", { model });
-      await loadModels();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActiveDownload(undefined);
+      await loadModels();
     }
   };
 
@@ -354,7 +354,7 @@ function ModelManager() {
 
   const downloadedModels = models.filter((m) => m.downloaded);
   const activeModelInfo = models.find((m) => m.name === activeModel);
-  const libraryModels = models.filter((m) => !m.downloaded && m.can_download);
+  const libraryModels = models.filter((m) => m.can_download);
 
   // Tab Component
   const TabButton = ({
@@ -486,18 +486,32 @@ function ModelManager() {
               )
             ) : libraryModels.length === 0 ? (
               <div className="py-20 text-center text-[13px] text-white/30">
-                No new models available.
+                No models available.
               </div>
             ) : (
               libraryModels.map((model) => (
                 <ModelCard
                   key={model.name}
                   model={model}
+                  isDownloaded={model.downloaded}
+                  isActive={activeModel === model.name}
                   isDownloading={activeDownload === model.name}
                   downloadProgress={downloadProgress[model.name]}
-                  onAction={() => onDownload(model.name)}
-                  actionLabel={activeDownload === model.name ? "Downloading" : "Download"}
-                  actionDisabled={!!activeDownload}
+                  onAction={() =>
+                    model.downloaded
+                      ? void onSelectModel(model.name)
+                      : void onDownload(model.name)
+                  }
+                  actionLabel={
+                    activeModel === model.name
+                      ? "Active"
+                      : model.downloaded
+                        ? "Activate"
+                        : activeDownload === model.name
+                          ? "Downloading"
+                          : "Download"
+                  }
+                  actionDisabled={!!activeDownload || activeModel === model.name}
                 />
               ))
             )}
@@ -510,6 +524,7 @@ function ModelManager() {
 
 function ModelCard({
   model,
+  isDownloaded,
   isActive,
   isDownloading,
   downloadProgress,
@@ -518,6 +533,7 @@ function ModelCard({
   actionDisabled,
 }: {
   model: ModelInfo;
+  isDownloaded?: boolean;
   isActive?: boolean;
   isDownloading?: boolean;
   downloadProgress?: ModelDownloadProgressEvent;
@@ -559,6 +575,12 @@ function ModelCard({
               <div className="flex items-center gap-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5">
                 <div className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.8)]" />
                 <span className="text-[10px] font-medium text-indigo-200">ACTIVE</span>
+              </div>
+            )}
+            {!isActive && isDownloaded && (
+              <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(74,222,128,0.8)]" />
+                <span className="text-[10px] font-medium text-emerald-200">DOWNLOADED</span>
               </div>
             )}
           </div>
