@@ -55,3 +55,4 @@ models/
 
 # Build artifacts
 /apps/desktop/dist/
+comparison.md

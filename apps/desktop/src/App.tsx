@@ -252,7 +252,7 @@ const CleanButton = ({
   <button
     onClick={onClick}
     disabled={disabled}
-    className={`inline-flex h-8 items-center justify-center rounded-lg px-3 text-[13px] font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-white/10 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
+    className={`inline-flex h-9 items-center justify-center rounded-xl px-4 text-[13px] font-medium transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-white/20 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-30 ${
       className || ""
     }`}
   >
@@ -334,11 +334,11 @@ function ModelManager() {
     }));
     try {
       await invoke("download_model", { model });
+      await loadModels();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActiveDownload(undefined);
-      await loadModels();
     }
   };
 
@@ -354,127 +354,166 @@ function ModelManager() {
 
   const downloadedModels = models.filter((m) => m.downloaded);
   const activeModelInfo = models.find((m) => m.name === activeModel);
-  const libraryModels = models.filter((m) => m.can_download);
+  const libraryModels = models.filter((m) => !m.downloaded && m.can_download);
 
-  // Tab Component
-  const TabButton = ({
+  const NavItem = ({
     active,
     onClick,
-    children,
+    icon,
+    label,
+    badge,
   }: {
     active: boolean;
     onClick: () => void;
-    children: React.ReactNode;
+    icon: React.ReactNode;
+    label: string;
+    badge?: number;
   }) => (
     <button
       onClick={onClick}
-      className={`relative px-4 py-1.5 text-[13px] font-medium transition-colors duration-300 ${
-        active ? "text-white" : "text-white/40 hover:text-white/60"
+      className={`group w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-300 ${
+        active
+          ? "text-white bg-white/10 backdrop-blur-xl shadow-lg border border-white/20"
+          : "text-white/60 hover:text-white hover:bg-white/5"
       }`}
     >
-      {active && (
-        <motion.div
-          layoutId="activeTabIndicator"
-          className="absolute inset-0 -z-10 rounded-full bg-white/10"
-          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-        />
+      <div className="flex items-center space-x-3">
+        <span className={`transition-transform duration-300 group-hover:scale-110 ${active ? 'text-white' : 'text-white/40 group-hover:text-white/70'}`}>
+          {icon}
+        </span>
+        <span className="text-[14px] font-medium">{label}</span>
+      </div>
+      {typeof badge === 'number' && badge > 0 && (
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-white/20 text-white' : 'bg-white/5 text-white/40 group-hover:text-white/60'}`}>
+          {badge}
+        </span>
       )}
-      {children}
     </button>
   );
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-[#030303] text-[#EDEDED] selection:bg-indigo-500/20">
-      {/* Subtle Background Gradients */}
-      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div className="absolute -left-[20%] -top-[20%] h-[600px] w-[600px] rounded-full bg-indigo-500/5 blur-[120px]" />
-        <div className="absolute -bottom-[20%] -right-[20%] h-[600px] w-[600px] rounded-full bg-blue-500/5 blur-[120px]" />
-      </div>
-
-      {/* Header Area */}
-      <div className="relative z-10 border-b border-white/[0.04] bg-[#030303]/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-white/10 to-white/5 shadow-inner ring-1 ring-white/10">
-              <svg
-                className="h-5 w-5 text-white/90"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                />
+    <div className="flex h-screen w-screen bg-gradient-to-br from-gray-900 via-gray-950 to-black text-white selection:bg-white/20 overflow-hidden font-sans">
+      {/* Liquid Glass Sidebar */}
+      <aside className="w-64 relative flex flex-col border-r border-white/5">
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-2xl"></div>
+        
+        <div className="relative z-10 flex flex-col h-full pt-10 pb-6 px-6">
+          {/* Logo Section */}
+          <div className="flex items-center space-x-3 mb-10 px-2">
+            <div className="w-10 h-10 bg-gradient-to-br from-white/20 to-white/5 rounded-xl flex items-center justify-center backdrop-blur-md border border-white/20 shadow-xl shadow-black/20">
+              <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
               </svg>
             </div>
-            <div>
-              <h1 className="text-[15px] font-medium leading-none tracking-tight text-white/90">
-                Voice Models
-              </h1>
-              <p className="mt-1 text-[13px] text-white/40">
-                Local speech recognition engines
+            <div className="flex flex-col">
+              <span className="text-[16px] font-bold tracking-tight">OpenWispr</span>
+              <span className="text-[11px] text-white/40 font-medium tracking-wide">Desktop Alpha</span>
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 space-y-2">
+            <NavItem
+              active={tab === "downloaded"}
+              onClick={() => setTab("downloaded")}
+              label="Installed"
+              badge={downloadedModels.length}
+              icon={
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              }
+            />
+            <NavItem
+              active={tab === "library"}
+              onClick={() => setTab("library")}
+              label="Library"
+              badge={libraryModels.length}
+              icon={
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              }
+            />
+          </nav>
+
+          {/* Footer Info */}
+          <div className="mt-auto pt-6 border-t border-white/5">
+            <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] text-white/40 font-medium">Active Model</span>
+                <span className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+              </div>
+              <p className="text-[13px] font-medium text-white/80 truncate">
+                {activeModelInfo?.name || "None"}
               </p>
             </div>
           </div>
-
-          <div className="flex items-center gap-1 rounded-full bg-white/[0.03] p-1 ring-1 ring-white/[0.04]">
-            <TabButton
-              active={tab === "downloaded"}
-              onClick={() => setTab("downloaded")}
-            >
-              Installed
-            </TabButton>
-            <TabButton
-              active={tab === "library"}
-              onClick={() => setTab("library")}
-            >
-              Library
-            </TabButton>
-          </div>
         </div>
-      </div>
+      </aside>
 
-      {/* Main Content */}
-      <div className="relative z-10 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 py-8">
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/10 bg-red-500/5 p-4 text-red-200/90 shadow-lg shadow-red-500/5"
-            >
-              <svg className="mt-0.5 h-4 w-4 shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <p className="text-[13px] leading-relaxed">{error}</p>
-            </motion.div>
-          )}
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-y-auto scrollbar-hide relative">
+        {/* Subtle Radial Gradient Glows */}
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none"></div>
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-blue-500/5 rounded-full blur-[100px] pointer-events-none"></div>
 
-          <div className="space-y-3">
+        <div className="relative z-10 max-w-4xl mx-auto px-10 py-12">
+          {/* Header */}
+          <header className="mb-12">
+            <h2 className="text-[32px] font-bold tracking-tight mb-2 text-white">
+              {tab === "downloaded" ? "Your Voice Models" : "Model Library"}
+            </h2>
+            <p className="text-[15px] text-white/50 font-medium">
+              {tab === "downloaded" 
+                ? "Manage and switch between your installed speech recognition engines."
+                : "Browse and download high-quality local models for offline use."}
+            </p>
+          </header>
+
+          {/* Error Banner */}
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-8 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start space-x-3 backdrop-blur-md"
+              >
+                <svg className="w-5 h-5 text-red-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-[14px] text-red-200/80 font-medium leading-relaxed">{error}</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Model List */}
+          <div className="space-y-4">
             {loading && models.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-32 text-white/20">
-                <span className="loading-dot mb-4 h-1.5 w-1.5 rounded-full bg-current" />
-                <span className="text-[13px]">Loading models...</span>
+              <div className="flex flex-col items-center justify-center py-40">
+                <div className="w-8 h-8 border-2 border-white/10 border-t-white/60 rounded-full animate-spin mb-4"></div>
+                <span className="text-white/40 text-[14px] font-medium tracking-wide">Fetching models...</span>
               </div>
             ) : tab === "downloaded" ? (
               downloadedModels.length === 0 ? (
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/5 bg-white/[0.01] py-32 text-center">
-                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.03]">
-                    <svg className="h-6 w-6 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 12H4" />
+                <div className="py-32 flex flex-col items-center border border-dashed border-white/10 rounded-3xl bg-white/[0.02]">
+                  <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6">
+                    <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                     </svg>
                   </div>
-                  <p className="text-[14px] font-medium text-white/50">No models installed</p>
-                  <button onClick={() => setTab("library")} className="mt-4 text-[13px] font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
-                    Browse Library &rarr;
+                  <h3 className="text-white/60 text-[16px] font-semibold mb-2">No models installed</h3>
+                  <button
+                    onClick={() => setTab("library")}
+                    className="text-indigo-400 hover:text-indigo-300 font-semibold text-[14px] transition-colors"
+                  >
+                    Explore the Library &rarr;
                   </button>
                 </div>
               ) : (
                 downloadedModels.map((model) => (
-                  <ModelCard
+                  <ModelCardRefined
                     key={model.name}
                     model={model}
                     isActive={activeModel === model.name}
@@ -485,46 +524,29 @@ function ModelManager() {
                 ))
               )
             ) : libraryModels.length === 0 ? (
-              <div className="py-20 text-center text-[13px] text-white/30">
-                No models available.
-              </div>
+              <div className="py-32 text-center text-white/30 font-medium">All available models have been installed.</div>
             ) : (
               libraryModels.map((model) => (
-                <ModelCard
+                <ModelCardRefined
                   key={model.name}
                   model={model}
-                  isDownloaded={model.downloaded}
-                  isActive={activeModel === model.name}
                   isDownloading={activeDownload === model.name}
                   downloadProgress={downloadProgress[model.name]}
-                  onAction={() =>
-                    model.downloaded
-                      ? void onSelectModel(model.name)
-                      : void onDownload(model.name)
-                  }
-                  actionLabel={
-                    activeModel === model.name
-                      ? "Active"
-                      : model.downloaded
-                        ? "Activate"
-                        : activeDownload === model.name
-                          ? "Downloading"
-                          : "Download"
-                  }
-                  actionDisabled={!!activeDownload || activeModel === model.name}
+                  onAction={() => onDownload(model.name)}
+                  actionLabel={activeDownload === model.name ? "Downloading" : "Download"}
+                  actionDisabled={!!activeDownload}
                 />
               ))
             )}
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
 
-function ModelCard({
+function ModelCardRefined({
   model,
-  isDownloaded,
   isActive,
   isDownloading,
   downloadProgress,
@@ -533,7 +555,6 @@ function ModelCard({
   actionDisabled,
 }: {
   model: ModelInfo;
-  isDownloaded?: boolean;
   isActive?: boolean;
   isDownloading?: boolean;
   downloadProgress?: ModelDownloadProgressEvent;
@@ -548,59 +569,42 @@ function ModelCard({
 
   return (
     <div
-      className={`group relative overflow-hidden rounded-xl border transition-all duration-300 ${
+      className={`group relative overflow-hidden rounded-2xl transition-all duration-300 ${
         isActive
-          ? "border-indigo-500/20 bg-indigo-500/[0.04]"
-          : "border-white/[0.03] bg-white/[0.01] hover:border-white/[0.08] hover:bg-white/[0.03]"
-      }`}
+          ? "bg-white/10 border-white/20 shadow-2xl shadow-indigo-500/10"
+          : "bg-white/5 border-white/5 hover:bg-white/[0.08] hover:border-white/10"
+      } border`}
     >
-      {/* Slim Progress Bar at Bottom */}
-      {isDownloading && (
-        <div className="absolute bottom-0 left-0 h-[2px] w-full bg-white/5">
-          <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${percent}%` }}
-            className="h-full bg-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.5)]"
-          />
-        </div>
-      )}
-
-      <div className="relative z-10 flex items-center justify-between p-5">
+      <div className="relative z-10 flex items-center justify-between p-6">
         <div className="min-w-0 flex-1 pr-6">
-          <div className="flex items-center gap-3">
-            <h3 className={`truncate text-[15px] font-medium tracking-tight ${isActive ? "text-white" : "text-white/80"}`}>
+          <div className="flex items-center space-x-3 mb-2">
+            <h3 className={`text-[17px] font-bold tracking-tight ${isActive ? "text-white" : "text-white/90"}`}>
               {model.name}
             </h3>
             {isActive && (
-              <div className="flex items-center gap-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5">
-                <div className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.8)]" />
-                <span className="text-[10px] font-medium text-indigo-200">ACTIVE</span>
+              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/30">
+                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></div>
+                <span className="text-[10px] font-bold text-indigo-300 tracking-wider">ACTIVE</span>
               </div>
             )}
-            {!isActive && isDownloaded && (
-              <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5">
-                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(74,222,128,0.8)]" />
-                <span className="text-[10px] font-medium text-emerald-200">DOWNLOADED</span>
-              </div>
+            {model.note && (
+              <span className="text-[11px] font-medium text-white/30 truncate max-w-[150px]">{model.note}</span>
             )}
           </div>
           
-          <div className="mt-2 flex items-center gap-4 text-[13px] text-white/40">
-            <span className="flex items-center gap-1.5">
-              <span>{MODEL_SIZE_HINTS[model.name] || "Unknown size"}</span>
-            </span>
-            <span className="h-1 w-1 rounded-full bg-white/10" />
-            <span className="flex items-center gap-1.5">
+          <div className="flex items-center space-x-4 text-[13px] text-white/40 font-medium">
+            <div className="flex items-center space-x-1.5">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7c-2 0-3 1-3 3zM9 11h6m-6 4h3" />
+              </svg>
+              <span>{MODEL_SIZE_HINTS[model.name] || "Search sizes"}</span>
+            </div>
+            <div className="flex items-center space-x-1.5">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
               <span>{model.runtime}</span>
-            </span>
-            {isDownloading && (
-              <>
-                 <span className="h-1 w-1 rounded-full bg-white/10" />
-                 <span className="text-indigo-300/90 font-medium">
-                  {Math.round(percent)}%
-                 </span>
-              </>
-            )}
+            </div>
           </div>
         </div>
 
@@ -608,22 +612,36 @@ function ModelCard({
           <CleanButton
             onClick={onAction}
             disabled={actionDisabled}
-            className={
-              isActive
-                ? "cursor-default text-indigo-300/50"
-                : actionDisabled && !isDownloading
-                  ? "cursor-not-allowed bg-transparent text-white/10"
-                  : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-            }
+            className={`
+              ${isActive
+                ? "bg-white/10 text-white/60 cursor-default"
+                : isDownloading
+                ? "bg-indigo-500/20 text-indigo-300"
+                : "bg-white/10 text-white hover:bg-white/20 border border-white/5"}
+            `}
           >
             {isDownloading ? (
-               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+              <div className="flex items-center space-x-2">
+                <div className="w-3 h-3 border-2 border-indigo-300/30 border-t-indigo-300 rounded-full animate-spin"></div>
+                <span className="font-bold tabular-nums">{Math.round(percent)}%</span>
+              </div>
             ) : (
               actionLabel
             )}
           </CleanButton>
         </div>
       </div>
+
+      {/* Modern Slim Loader Bar */}
+      {isDownloading && (
+        <div className="absolute bottom-0 left-0 w-full h-1 bg-white/5">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${percent}%` }}
+            className="h-full bg-gradient-to-r from-indigo-500 to-blue-400 shadow-[0_0_12px_rgba(99,102,241,0.6)]"
+          />
+        </div>
+      )}
     </div>
   );
 }
