@@ -339,7 +339,14 @@ fn insert_text_directly(text: &str) {
 
 fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
     if text.trim().is_empty() {
+        if verbose_logs_enabled() {
+            println!("[paste] skipping empty text");
+        }
         return Ok(());
+    }
+
+    if verbose_logs_enabled() {
+        println!("[paste] preparing to paste {} chars", text.chars().count());
     }
 
     // The overlay can become the active app while transcribing. Move focus back
@@ -359,9 +366,16 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
             return Ok(());
         }
     };
+    
+    if verbose_logs_enabled() {
+        println!("[paste] clipboard acquired, capturing current state");
+    }
     let snapshot = capture_clipboard(&mut clipboard);
 
     if let ClipboardSnapshot::OpaqueOrEmpty = snapshot {
+        if verbose_logs_enabled() {
+            println!("[paste] clipboard empty/opaque, using direct text insertion");
+        }
         insert_text_directly(text);
         return Ok(());
     }
@@ -377,11 +391,18 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
         return Ok(());
     }
 
+    if verbose_logs_enabled() {
+        println!("[paste] text copied to clipboard, triggering paste shortcut");
+    }
     // Let clipboard managers receive the new value before pasting.
     thread::sleep(Duration::from_millis(35));
     trigger_paste_shortcut();
     // Let target app consume Cmd/Ctrl+V before restoring clipboard.
     thread::sleep(Duration::from_millis(110));
+    
+    if verbose_logs_enabled() {
+        println!("[paste] restoring original clipboard content");
+    }
     restore_clipboard(&mut clipboard, snapshot);
 
     Ok(())
@@ -718,9 +739,15 @@ pub async fn stop_recording_for_capture(
         stream_lock.stream.take().is_some()
     };
     if !had_stream {
+        if verbose_logs_enabled() {
+            println!("[stt] stop_recording called but no active stream");
+        }
         return Ok(());
     }
 
+    if verbose_logs_enabled() {
+        println!("[stt] stop_recording: stream stopped, starting transcription");
+    }
     emit_transcription_status(&app, "processing", None);
 
     let audio_data = {
@@ -747,16 +774,35 @@ pub async fn stop_recording_for_capture(
     let mut adapter_guard = capture.stt_adapter.lock().await;
     let mut loaded_model_guard = capture.loaded_model.lock().await;
     if adapter_guard.is_none() || loaded_model_guard.as_deref() != Some(target_model.as_str()) {
-        let mut adapter = create_adapter().map_err(|e| e.to_string())?;
+        if verbose_logs_enabled() {
+            println!("[stt] initializing adapter for model: {}", target_model);
+        }
+        let mut adapter = create_adapter().map_err(|e| {
+            let err_msg = format!("Failed to create adapter: {}", e);
+            eprintln!("{}", err_msg);
+            err_msg
+        })?;
         adapter
             .initialize(SttConfig {
                 model_name: target_model.clone(),
                 ..Default::default()
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let err_msg = format!("Failed to initialize adapter: {}", e);
+                eprintln!("{}", err_msg);
+                // Clean up on initialization failure
+                *adapter_guard = None;
+                *loaded_model_guard = None;
+                err_msg
+            })?;
         *adapter_guard = Some(adapter);
-        *loaded_model_guard = Some(target_model);
+        *loaded_model_guard = Some(target_model.clone());
+        if verbose_logs_enabled() {
+            println!("[stt] adapter initialized successfully for model: {}", target_model);
+        }
+    } else if verbose_logs_enabled() {
+        println!("[stt] reusing existing adapter for model: {}", target_model);
     }
     let adapter = adapter_guard
         .as_ref()
@@ -815,10 +861,16 @@ pub async fn stop_recording_for_capture(
             );
             println!("[stt] transcript: {}", result.text);
 
+            if verbose_logs_enabled() {
+                println!("[paste] attempting to paste {} chars to active window", result.text.chars().count());
+            }
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
+                eprintln!("[paste] ERROR failed to paste text: {}", err);
                 if verbose_logs_enabled() {
-                    eprintln!("[stt] paste failed: {}", err);
+                    eprintln!("[paste] transcription will still be emitted to UI");
                 }
+            } else if verbose_logs_enabled() {
+                println!("[paste] paste completed successfully");
             }
 
             let _ = app.emit_all(
@@ -834,6 +886,9 @@ pub async fn stop_recording_for_capture(
             if let Some(window) = app.get_window("main") {
                 let _ = window.hide();
             }
+            if verbose_logs_enabled() {
+                println!("[stt] transcription cycle complete, ready for next run");
+            }
             Ok(())
         }
         Err(err) => {
@@ -844,6 +899,9 @@ pub async fn stop_recording_for_capture(
             emit_transcription_status(&app, "idle", None);
             if let Some(window) = app.get_window("main") {
                 let _ = window.hide();
+            }
+            if verbose_logs_enabled() {
+                println!("[stt] error recovery complete, adapter still loaded for next run");
             }
             Err(message)
         }
