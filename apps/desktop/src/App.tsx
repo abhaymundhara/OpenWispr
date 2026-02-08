@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api";
+import { appWindow } from "@tauri-apps/api/window";
 
 type TranscriptionStatus = "idle" | "listening" | "processing" | "error";
 
@@ -19,13 +20,13 @@ type ModelInfo = {
 };
 
 const MODEL_SIZE_HINTS: Record<string, string> = {
-  "tiny": "~75 MB",
+  tiny: "~75 MB",
   "tiny.en": "~75 MB",
-  "base": "~140 MB",
+  base: "~140 MB",
   "base.en": "~140 MB",
-  "small": "~460 MB",
+  small: "~460 MB",
   "small.en": "~460 MB",
-  "medium": "~1.5 GB",
+  medium: "~1.5 GB",
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
@@ -67,14 +68,22 @@ const useFeedbackSounds = (enabled: boolean) => {
     if (ctx.state === "suspended") void ctx.resume();
     const t = ctx.currentTime;
 
-    const playTone = (freq: number, gainStart: number, startOffset: number, duration: number) => {
+    const playTone = (
+      freq: number,
+      gainStart: number,
+      startOffset: number,
+      duration: number,
+    ) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.frequency.setValueAtTime(freq, t + startOffset);
       gain.gain.setValueAtTime(gainStart, t + startOffset);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + startOffset + duration);
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        t + startOffset + duration,
+      );
       osc.start(t + startOffset);
       osc.stop(t + startOffset + duration);
     };
@@ -137,10 +146,14 @@ const JarvisWaveBars = ({ audioLevel }: { audioLevel: number }) => {
       {[...Array(10)].map((_, index) => {
         const baseHeight = 6;
         const maxHeight = 14;
-        const variation = Math.sin(time + index * 0.4) * 0.6 + (Math.random() - 0.5) * 1.0;
+        const variation =
+          Math.sin(time + index * 0.4) * 0.6 + (Math.random() - 0.5) * 1.0;
         const height = Math.max(
           3,
-          Math.min(maxHeight, baseHeight + normalizedLevel * (maxHeight - baseHeight) + variation),
+          Math.min(
+            maxHeight,
+            baseHeight + normalizedLevel * (maxHeight - baseHeight) + variation,
+          ),
         );
         return (
           <div
@@ -297,7 +310,9 @@ function ModelManager() {
       <div className="mx-auto max-w-3xl">
         <div className="flex items-end justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Model Manager</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Model Manager
+            </h1>
             <p className="text-zinc-400 text-sm mt-1">
               Download Whisper models locally. These stay on-device.
             </p>
@@ -348,7 +363,9 @@ function ModelManager() {
               <div className="text-right">Select</div>
             </div>
             {loading ? (
-              <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
+              <div className="px-4 py-8 text-sm text-zinc-400">
+                Loading models...
+              </div>
             ) : downloadedModels.length === 0 ? (
               <div className="px-4 py-8 text-sm text-zinc-400">
                 No downloaded models yet. Go to Library and download one.
@@ -390,7 +407,9 @@ function ModelManager() {
               <div className="text-right">Action</div>
             </div>
             {loading ? (
-              <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
+              <div className="px-4 py-8 text-sm text-zinc-400">
+                Loading models...
+              </div>
             ) : (
               models.map((model) => {
                 const downloading = activeDownload === model.name;
@@ -402,7 +421,9 @@ function ModelManager() {
                     <div>
                       <div className="font-medium">{model.name}</div>
                       {model.note && (
-                        <div className="text-xs text-zinc-500 mt-0.5">{model.note}</div>
+                        <div className="text-xs text-zinc-500 mt-0.5">
+                          {model.note}
+                        </div>
                       )}
                     </div>
                     <div className="text-zinc-400 text-sm">
@@ -416,18 +437,20 @@ function ModelManager() {
                             ? "bg-emerald-500/20 text-emerald-300 cursor-default"
                             : !model.can_download
                               ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-                            : "bg-blue-600 hover:bg-blue-500 text-white"
+                              : "bg-blue-600 hover:bg-blue-500 text-white"
                         }`}
-                        disabled={model.downloaded || downloading || !model.can_download}
+                        disabled={
+                          model.downloaded || downloading || !model.can_download
+                        }
                         onClick={() => onDownload(model.name)}
                       >
                         {model.downloaded
                           ? "Downloaded"
                           : !model.can_download
                             ? "Coming soon"
-                          : downloading
-                            ? "Downloading..."
-                            : "Download"}
+                            : downloading
+                              ? "Downloading..."
+                              : "Download"}
                       </button>
                     </div>
                   </div>
@@ -465,13 +488,24 @@ function DictationPillApp() {
           "transcription-status",
           (event) => {
             setSttStatus(event.payload.status);
-            if (event.payload.status === "listening" || event.payload.status === "idle") {
+            if (
+              event.payload.status === "listening" ||
+              event.payload.status === "idle"
+            ) {
               setSttError(undefined);
             }
             if (event.payload.error) {
               setSttError(event.payload.error);
             } else if (event.payload.status !== "error") {
               setSttError(undefined);
+            }
+
+            // Hide window when transcription is complete (status becomes idle)
+            if (event.payload.status === "idle" && !fnHeld) {
+              // Small delay to ensure paste completes before hiding
+              setTimeout(() => {
+                appWindow.hide().catch(console.error);
+              }, 150);
             }
           },
         );

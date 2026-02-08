@@ -760,9 +760,7 @@ pub async fn stop_recording_for_capture(
             println!("[stt] no audio captured, skipping transcription");
         }
         emit_transcription_status(&app, "idle", None);
-        if let Some(window) = app.get_window("main") {
-            let _ = window.hide();
-        }
+        // Let UI hide window
         return Ok(());
     }
 
@@ -864,28 +862,32 @@ pub async fn stop_recording_for_capture(
             if verbose_logs_enabled() {
                 println!("[paste] attempting to paste {} chars to active window", result.text.chars().count());
             }
+            
+            // Emit result FIRST so UI shows the text
+            let _ = app.emit_all(
+                "transcription-result",
+                TranscriptionResultEvent {
+                    text: result.text.clone(),
+                    language: result.language.clone(),
+                    confidence: result.confidence,
+                    is_final: true,
+                },
+            );
+            
+            // Then paste to active window
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
                 eprintln!("[paste] ERROR failed to paste text: {}", err);
                 if verbose_logs_enabled() {
-                    eprintln!("[paste] transcription will still be emitted to UI");
+                    eprintln!("[paste] transcription still emitted to UI");
                 }
             } else if verbose_logs_enabled() {
                 println!("[paste] paste completed successfully");
             }
 
-            let _ = app.emit_all(
-                "transcription-result",
-                TranscriptionResultEvent {
-                    text: result.text,
-                    language: result.language,
-                    confidence: result.confidence,
-                    is_final: true,
-                },
-            );
+            // CRITICAL: Set status to idle and let the UI/frontend hide the window
+            // Don't hide from backend to avoid race conditions
             emit_transcription_status(&app, "idle", None);
-            if let Some(window) = app.get_window("main") {
-                let _ = window.hide();
-            }
+            
             if verbose_logs_enabled() {
                 println!("[stt] transcription cycle complete, ready for next run");
             }
@@ -899,9 +901,7 @@ pub async fn stop_recording_for_capture(
             emit_transcription_status(&app, "idle", None);
             if let Some(window) = app.get_window("main") {
                 let _ = window.hide();
-            }
-            if verbose_logs_enabled() {
-                println!("[stt] error recovery complete, adapter still loaded for next run");
+            // Let UI hide window   println!("[stt] error recovery complete, adapter still loaded for next run");
             }
             Err(message)
         }
