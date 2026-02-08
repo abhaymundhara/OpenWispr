@@ -82,6 +82,14 @@ fn emit_transcription_status(app: &AppHandle, status: &str, error: Option<String
     );
 }
 
+fn verbose_logs_enabled() -> bool {
+    std::env::var("OPENWISPR_VERBOSE_LOGS")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
 enum ClipboardSnapshot {
     Text(String),
     Image {
@@ -133,11 +141,15 @@ fn capture_active_paste_target() {
         .arg("tell application \"System Events\" to get unix id of first application process whose frontmost is true")
         .output();
     let Ok(pid_output) = pid_output else {
-        eprintln!("[paste] could not query frontmost app pid with osascript");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] could not query frontmost app pid with osascript");
+        }
         return;
     };
     if !pid_output.status.success() {
-        eprintln!("[paste] osascript query for frontmost app pid failed");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] osascript query for frontmost app pid failed");
+        }
         return;
     }
 
@@ -145,15 +157,19 @@ fn capture_active_paste_target() {
         return;
     };
     let Some(pid) = parse_frontmost_pid(&raw_pid) else {
-        eprintln!("[paste] invalid frontmost app pid '{}'", raw_pid.trim());
+        if verbose_logs_enabled() {
+            eprintln!("[paste] invalid frontmost app pid '{}'", raw_pid.trim());
+        }
         return;
     };
     let self_pid = std::process::id() as i32;
     if pid == self_pid {
-        eprintln!(
-            "[paste] ignoring self pid {} as paste target (openwispr frontmost)",
-            pid
-        );
+        if verbose_logs_enabled() {
+            eprintln!(
+                "[paste] ignoring self pid {} as paste target (openwispr frontmost)",
+                pid
+            );
+        }
         return;
     }
 
@@ -172,7 +188,9 @@ fn capture_active_paste_target() {
         .unwrap_or_else(|| "<unknown>".to_string());
 
     if let Ok(mut slot) = paste_target_slot().lock() {
-        println!("[paste] captured frontmost app pid={} name='{}'", pid, name);
+        if verbose_logs_enabled() {
+            println!("[paste] captured frontmost app pid={} name='{}'", pid, name);
+        }
         *slot = Some(MacPasteTarget { pid, name });
     }
 }
@@ -181,11 +199,15 @@ fn capture_active_paste_target() {
 fn capture_active_paste_target() {
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd == 0 {
-        eprintln!("[paste] GetForegroundWindow returned null");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] GetForegroundWindow returned null");
+        }
         return;
     }
     if let Ok(mut slot) = paste_target_slot().lock() {
-        println!("[paste] captured foreground HWND 0x{:X}", hwnd as usize);
+        if verbose_logs_enabled() {
+            println!("[paste] captured foreground HWND 0x{:X}", hwnd as usize);
+        }
         *slot = Some(hwnd);
     }
 }
@@ -201,7 +223,9 @@ pub fn remember_active_paste_target() {
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
     let Some(target) = target else {
-        eprintln!("[paste] no captured app to restore on macOS");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] no captured app to restore on macOS");
+        }
         return;
     };
 
@@ -218,10 +242,12 @@ fn restore_active_paste_target() {
             target.pid, target.name
         );
     } else {
-        eprintln!(
-            "[paste] failed to restore focus to app pid={} name='{}'",
-            target.pid, target.name
-        );
+        if verbose_logs_enabled() {
+            eprintln!(
+                "[paste] failed to restore focus to app pid={} name='{}'",
+                target.pid, target.name
+            );
+        }
     }
     thread::sleep(Duration::from_millis(45));
 }
@@ -230,13 +256,17 @@ fn restore_active_paste_target() {
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| *slot);
     let Some(hwnd) = target else {
-        eprintln!("[paste] no captured HWND to restore on Windows");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] no captured HWND to restore on Windows");
+        }
         return;
     };
 
     let valid = unsafe { IsWindow(hwnd) != 0 };
     if !valid {
-        eprintln!("[paste] captured HWND is no longer valid");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] captured HWND is no longer valid");
+        }
         return;
     }
 
@@ -319,10 +349,12 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
     let mut clipboard = match Clipboard::new() {
         Ok(clipboard) => clipboard,
         Err(err) => {
-            eprintln!(
-                "[paste] clipboard unavailable, falling back to direct typing: {}",
-                err
-            );
+            if verbose_logs_enabled() {
+                eprintln!(
+                    "[paste] clipboard unavailable, falling back to direct typing: {}",
+                    err
+                );
+            }
             insert_text_directly(text);
             return Ok(());
         }
@@ -335,10 +367,12 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
     }
 
     if let Err(err) = clipboard.set_text(text.to_string()) {
-        eprintln!(
-            "[paste] failed to set clipboard text, falling back to direct typing: {}",
-            err
-        );
+        if verbose_logs_enabled() {
+            eprintln!(
+                "[paste] failed to set clipboard text, falling back to direct typing: {}",
+                err
+            );
+        }
         insert_text_directly(text);
         return Ok(());
     }
@@ -374,7 +408,9 @@ fn select_input_device(host: &Host) -> Result<Device, String> {
                     .name()
                     .unwrap_or_else(|_| "<unknown input device>".to_string());
                 if name.to_lowercase().contains(&needle) {
-                    println!("[audio] selected input device by env override: {}", name);
+                    if verbose_logs_enabled() {
+                        println!("[audio] selected input device by env override: {}", name);
+                    }
                     return Ok(device);
                 }
             }
@@ -387,10 +423,12 @@ fn select_input_device(host: &Host) -> Result<Device, String> {
 
     let default = host.default_input_device();
     if let Some(device) = default {
-        let name = device
-            .name()
-            .unwrap_or_else(|_| "<unknown input device>".to_string());
-        println!("[audio] selected default input device: {}", name);
+        if verbose_logs_enabled() {
+            let name = device
+                .name()
+                .unwrap_or_else(|_| "<unknown input device>".to_string());
+            println!("[audio] selected default input device: {}", name);
+        }
         return Ok(device);
     }
 
@@ -689,7 +727,9 @@ pub async fn stop_recording_for_capture(
     };
 
     if audio_data.is_empty() {
-        println!("[stt] no audio captured, skipping transcription");
+        if verbose_logs_enabled() {
+            println!("[stt] no audio captured, skipping transcription");
+        }
         emit_transcription_status(&app, "idle", None);
         if let Some(window) = app.get_window("main") {
             let _ = window.hide();
@@ -726,16 +766,20 @@ pub async fn stop_recording_for_capture(
         .to_string();
     let (audio_data, format) = match normalize_audio_for_stt_with_ffmpeg(&audio_data, &format) {
         Ok((samples, normalized_format)) => {
-            println!(
-                "[stt] ffmpeg normalization applied samples={} sample_rate={} channels={}",
-                samples.len(),
-                normalized_format.sample_rate,
-                normalized_format.channels
-            );
+            if verbose_logs_enabled() {
+                println!(
+                    "[stt] ffmpeg normalization applied samples={} sample_rate={} channels={}",
+                    samples.len(),
+                    normalized_format.sample_rate,
+                    normalized_format.channels
+                );
+            }
             (samples, normalized_format)
         }
         Err(err) => {
-            eprintln!("[stt] ffmpeg normalization unavailable, using raw capture: {}", err);
+            if verbose_logs_enabled() {
+                eprintln!("[stt] ffmpeg normalization unavailable, using raw capture: {}", err);
+            }
             (audio_data, format)
         }
     };
@@ -744,14 +788,16 @@ pub async fn stop_recording_for_capture(
     } else {
         0.0
     };
-    println!(
-        "[stt] transcription started model={} samples={} duration_s={:.2} sample_rate={} channels={}",
-        model_name,
-        audio_data.len(),
-        audio_seconds,
-        format.sample_rate,
-        format.channels
-    );
+    if verbose_logs_enabled() {
+        println!(
+            "[stt] transcription started model={} samples={} duration_s={:.2} sample_rate={} channels={}",
+            model_name,
+            audio_data.len(),
+            audio_seconds,
+            format.sample_rate,
+            format.channels
+        );
+    }
 
     match adapter.transcribe(&audio_data, format).await {
         Ok(result) => {
@@ -759,21 +805,18 @@ pub async fn stop_recording_for_capture(
                 .language
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
-            let confidence = result
-                .confidence
-                .map(|value| format!("{:.3}", value))
-                .unwrap_or_else(|| "n/a".to_string());
             println!(
-                "[stt] transcription complete model={} language={} confidence={} chars={}",
+                "[stt] transcription complete model={} language={} chars={}",
                 model_name,
                 language,
-                confidence,
                 result.text.chars().count()
             );
             println!("[stt] transcript: {}", result.text);
 
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
-                eprintln!("[stt] paste failed: {}", err);
+                if verbose_logs_enabled() {
+                    eprintln!("[stt] paste failed: {}", err);
+                }
             }
 
             let _ = app.emit_all(
