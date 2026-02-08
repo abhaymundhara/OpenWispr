@@ -14,3 +14,5 @@ pub mod mlx;
 
 #[cfg(target_os = "windows")]
 pub mod whisper;
+
+pub mod fallback;
