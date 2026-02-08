@@ -508,10 +508,10 @@ function DictationPillApp() {
 
             // Hide window when transcription is complete (status becomes idle)
             if (event.payload.status === "idle" && !fnHeldRef.current) {
-              // Small delay to ensure paste completes before hiding
+              // Delay to ensure paste operation completes on its dedicated thread
               setTimeout(() => {
                 appWindow.hide().catch(console.error);
-              }, 150);
+              }, 300);
             }
           },
         );

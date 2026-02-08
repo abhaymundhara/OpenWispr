@@ -52,11 +52,14 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
                 eprintln!("Failed to start recording on Fn press: {}", err);
             }
         } else {
-            tauri::async_runtime::spawn(async move {
+            // CRITICAL: Must keep the JoinHandle alive to prevent task from being dropped mid-paste
+            let _join_handle = tauri::async_runtime::spawn(async move {
                 if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
                     eprintln!("Failed to stop recording on Fn release: {}", err);
                 }
             });
+            // Note: We intentionally don't await the join_handle here, as this callback
+            // must return immediately. The task will complete independently.
         }
     }
 

@@ -874,15 +874,16 @@ pub async fn stop_recording_for_capture(
                 },
             );
             
-            // Then paste to active window
-            if let Err(err) = paste_text_preserving_clipboard(&result.text) {
-                eprintln!("[paste] ERROR failed to paste text: {}", err);
-                if verbose_logs_enabled() {
-                    eprintln!("[paste] transcription still emitted to UI");
+            // CRITICAL: Paste operation must run on a blocking thread to prevent
+            // the async runtime from dropping the task mid-operation
+            let text_to_paste = result.text.clone();
+            std::thread::spawn(move || {
+                if let Err(err) = paste_text_preserving_clipboard(&text_to_paste) {
+                    eprintln!("[paste] ERROR failed to paste text: {}", err);
+                } else if verbose_logs_enabled() {
+                    println!("[paste] paste completed successfully");
                 }
-            } else if verbose_logs_enabled() {
-                println!("[paste] paste completed successfully");
-            }
+            });
 
             // CRITICAL: Set status to idle and let the UI/frontend hide the window
             // Don't hide from backend to avoid race conditions
