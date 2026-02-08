@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
-use tauri::{Manager, RunEvent, SystemTray, SystemTrayEvent, Wry};
+use tauri::{Manager, RunEvent, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, CustomMenuItem, Wry};
 
 mod audio;
 #[cfg(target_os = "macos")]
@@ -78,7 +78,15 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
 }
 
 fn main() {
-    let mut tray = SystemTray::new();
+    let dashboard = CustomMenuItem::new("dashboard".to_string(), "Dashboard");
+    let quit = CustomMenuItem::new("quit".to_string(), "Quit");
+    
+    let tray_menu = SystemTrayMenu::new()
+        .add_item(dashboard)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(quit);
+    
+    let mut tray = SystemTray::new().with_menu(tray_menu);
     #[cfg(target_os = "macos")]
     {
         tray = tray.with_icon_as_template(false);
@@ -87,10 +95,16 @@ fn main() {
     let app = tauri::Builder::default()
         .system_tray(tray)
         .on_system_tray_event(|app_handle, event| match event {
-            SystemTrayEvent::LeftClick { .. }
-            | SystemTrayEvent::RightClick { .. }
-            | SystemTrayEvent::DoubleClick { .. } => {
-                show_models_window(app_handle);
+            SystemTrayEvent::MenuItemClick { id, .. } => {
+                match id.as_str() {
+                    "dashboard" => {
+                        show_models_window(app_handle);
+                    }
+                    "quit" => {
+                        std::process::exit(0);
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         })
