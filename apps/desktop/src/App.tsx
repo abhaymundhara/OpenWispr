@@ -30,7 +30,8 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
-  "parakeet-tdt-0.6b-v2": "~1.0 GB",
+  "sherpa-onnx/parakeet-tdt-0.6b-v2-int8": "~1.0 GB",
+  "mlx-community/parakeet-tdt-0.6b-v2": "~1.2 GB",
 };
 
 const windowLabel =
