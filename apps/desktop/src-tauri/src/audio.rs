@@ -316,7 +316,17 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
     // to the app that was active at Fn press before injecting text.
     restore_active_paste_target();
 
-    let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
+    let mut clipboard = match Clipboard::new() {
+        Ok(clipboard) => clipboard,
+        Err(err) => {
+            eprintln!(
+                "[paste] clipboard unavailable, falling back to direct typing: {}",
+                err
+            );
+            insert_text_directly(text);
+            return Ok(());
+        }
+    };
     let snapshot = capture_clipboard(&mut clipboard);
 
     if let ClipboardSnapshot::OpaqueOrEmpty = snapshot {
@@ -324,9 +334,14 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    clipboard
-        .set_text(text.to_string())
-        .map_err(|e| format!("Failed to set clipboard text: {}", e))?;
+    if let Err(err) = clipboard.set_text(text.to_string()) {
+        eprintln!(
+            "[paste] failed to set clipboard text, falling back to direct typing: {}",
+            err
+        );
+        insert_text_directly(text);
+        return Ok(());
+    }
 
     // Let clipboard managers receive the new value before pasting.
     thread::sleep(Duration::from_millis(35));
@@ -759,8 +774,6 @@ pub async fn stop_recording_for_capture(
 
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
                 eprintln!("[stt] paste failed: {}", err);
-                emit_transcription_status(&app, "error", Some(err.clone()));
-                return Err(err);
             }
 
             let _ = app.emit_all(
@@ -782,6 +795,11 @@ pub async fn stop_recording_for_capture(
             let message = err.to_string();
             eprintln!("[stt] transcription failed: {}", message);
             emit_transcription_status(&app, "error", Some(message.clone()));
+            // Recover into idle so the next dictation cycle can proceed.
+            emit_transcription_status(&app, "idle", None);
+            if let Some(window) = app.get_window("main") {
+                let _ = window.hide();
+            }
             Err(message)
         }
     }
