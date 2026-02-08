@@ -127,13 +127,6 @@ impl SharedMlxParakeetAdapter {
         vec![MLX_PARAKEET_V2_MODEL.to_string()]
     }
 
-    pub(crate) fn current_model(&self) -> Option<String> {
-        self.state
-            .blocking_read()
-            .config
-            .as_ref()
-            .map(|cfg| cfg.model_name.clone())
-    }
 }
 
 fn resolve_model_ref(config: &SttConfig) -> Result<String> {

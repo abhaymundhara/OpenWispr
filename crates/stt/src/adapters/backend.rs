@@ -200,13 +200,6 @@ impl SharedWhisperAdapter {
         ]
     }
 
-    pub(crate) fn current_model(&self) -> Option<String> {
-        self.state
-            .blocking_read()
-            .config
-            .as_ref()
-            .map(|cfg| cfg.model_name.clone())
-    }
 }
 
 fn preferred_backend() -> (bool, &'static str) {

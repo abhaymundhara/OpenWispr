@@ -127,13 +127,6 @@ impl SharedSherpaAdapter {
         vec![SHERPA_PARAKEET_INT8_MODEL.to_string()]
     }
 
-    pub(crate) fn current_model(&self) -> Option<String> {
-        self.state
-            .blocking_read()
-            .config
-            .as_ref()
-            .map(|cfg| cfg.model_name.clone())
-    }
 }
 
 fn create_recognizer(model_root: &Path) -> Result<TransducerRecognizer> {
