@@ -5,14 +5,28 @@ import { appWindow } from "@tauri-apps/api/window";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
-  CheckCircle2,
-  Cpu,
   Download,
+  House,
+  BookText,
+  Scissors,
+  Type,
+  NotebookPen,
+  CircleHelp,
+  Bell,
+  UserRound,
+  SlidersHorizontal,
+  Monitor,
+  Keyboard,
+  Languages,
+  Mic,
+  CheckCircle2,
   Library,
   LoaderCircle,
-  MicVocal,
+  Users,
+  CreditCard,
+  ShieldCheck,
+  Hash,
   Settings2,
-  Sparkles,
 } from "lucide-react";
 
 // --- Types ---
@@ -85,10 +99,91 @@ const CleanButton = ({
   <button
     onClick={onClick}
     disabled={disabled}
-    className={`inline-flex min-h-11 items-center justify-center rounded-xl border border-[#2D4952] bg-[#13242B] px-4 text-sm font-medium text-[#EDE7DD] transition-all duration-200 hover:border-[#3E6470] hover:bg-[#1A2F38] active:scale-[0.98] ${className || ""} ${disabled ? "pointer-events-none opacity-45" : ""}`}
+    className={`inline-flex min-h-11 items-center justify-center rounded-xl border border-white/15 bg-white/[0.04] px-4 text-sm font-medium text-white/90 transition-all duration-200 hover:border-white/25 hover:bg-white/[0.08] active:scale-[0.98] ${className || ""} ${disabled ? "pointer-events-none opacity-45" : ""}`}
   >
     {children}
   </button>
+);
+
+type SettingsSection =
+  | "general"
+  | "system"
+  | "models"
+  | "account"
+  | "team"
+  | "billing"
+  | "privacy";
+
+type AppNavItemProps = {
+  active?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+};
+
+const AppNavItem = ({ active, icon, label, onClick }: AppNavItemProps) => (
+  <button
+    onClick={onClick}
+    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[1.02rem] transition-colors ${
+      active ? "bg-white/[0.12] text-white" : "text-white/78 hover:bg-white/[0.06]"
+    }`}
+  >
+    <span className={`${active ? "text-white/95" : "text-white/65"}`}>{icon}</span>
+    <span>{label}</span>
+  </button>
+);
+
+type SettingsNavItemProps = {
+  active?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+};
+
+const SettingsNavItem = ({ active, icon, label, onClick }: SettingsNavItemProps) => (
+  <button
+    onClick={onClick}
+    className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[1.02rem] transition-colors ${
+      active ? "bg-white/[0.10] text-white" : "text-white/72 hover:bg-white/[0.06]"
+    }`}
+  >
+    <span className={`${active ? "text-white/92" : "text-white/62"}`}>{icon}</span>
+    <span>{label}</span>
+  </button>
+);
+
+type SettingsRowProps = {
+  title: string;
+  description: string;
+  actionLabel: React.ReactNode;
+  onAction?: () => void;
+  actionDisabled?: boolean;
+  compact?: boolean;
+};
+
+const SettingsRow = ({
+  title,
+  description,
+  actionLabel,
+  onAction,
+  actionDisabled,
+  compact,
+}: SettingsRowProps) => (
+  <div
+    className={`grid gap-3 ${compact ? "py-3" : "py-4"} border-b border-white/10 last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center`}
+  >
+    <div>
+      <p className="text-[1.02rem] font-semibold text-white/95">{title}</p>
+      <p className="mt-1 text-[0.95rem] text-white/64">{description}</p>
+    </div>
+    <CleanButton
+      onClick={onAction ?? (() => {})}
+      disabled={actionDisabled}
+      className="h-[2.8rem] min-w-[10.5rem] rounded-[0.85rem] bg-white/[0.07] text-[1.02rem] sm:justify-center"
+    >
+      {actionLabel}
+    </CleanButton>
+  </div>
 );
 
 function Dashboard() {
@@ -100,9 +195,8 @@ function Dashboard() {
     Record<string, ModelDownloadProgressEvent>
   >({});
   const [activeModel, setActiveModel] = useState<string>();
-  const [currentView, setCurrentView] = useState<
-    "dashboard" | "library" | "settings"
-  >("dashboard");
+  const [section, setSection] = useState<SettingsSection>("general");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const loadModels = async () => {
     setLoading(true);
@@ -122,7 +216,7 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    loadModels();
+    void loadModels();
   }, []);
 
   useEffect(() => {
@@ -165,6 +259,7 @@ function Dashboard() {
         message: "Queued",
       },
     }));
+
     try {
       await invoke("download_model", { model });
       await loadModels();
@@ -187,434 +282,392 @@ function Dashboard() {
 
   const downloadedModels = models.filter((m) => m.downloaded);
   const activeModelInfo = models.find((m) => m.name === activeModel);
-  const libraryModels = models.filter((m) => !m.downloaded && m.can_download);
-  const activeDownloadProgress = activeDownload
-    ? downloadProgress[activeDownload]
-    : undefined;
+  const libraryModels = models.filter((m) => m.can_download);
+  const installableModels = models.filter((m) => m.can_download && !m.downloaded);
+  const selectedSectionTitle =
+    section === "general"
+      ? "General"
+      : section === "system"
+        ? "System"
+        : section === "models"
+          ? "Model Library"
+          : section === "account"
+            ? "Account"
+            : section === "team"
+              ? "Team"
+              : section === "billing"
+                ? "Plans and Billing"
+                : "Data and Privacy";
 
-  const stats = [
-    {
-      label: "Installed Models",
-      value: downloadedModels.length.toString(),
-      detail: downloadedModels.length > 0 ? "Ready for use" : "None installed",
-      icon: <CheckCircle2 className="h-4 w-4" />,
-    },
-    {
-      label: "Library Available",
-      value: libraryModels.length.toString(),
-      detail: "Download-ready",
-      icon: <Library className="h-4 w-4" />,
-    },
-    {
-      label: "Active Runtime",
-      value: activeModelInfo?.runtime ?? "Not selected",
-      detail: activeModelInfo ? activeModelInfo.name : "Select a model",
-      icon: <Cpu className="h-4 w-4" />,
-    },
-  ];
-
-  // --- Layout Helper Components ---
-
-  const NavItem = ({
-    active,
-    onClick,
-    icon,
-    label,
-  }: {
-    active: boolean;
-    onClick: () => void;
-    icon: React.ReactNode;
-    label: string;
-  }) => (
-    <button
-      onClick={onClick}
-      className={`group flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left text-sm transition-all duration-200 ${
-        active
-          ? "border-[#3A5F69] bg-[#1A2B32]/90 text-[#F2EEE6]"
-          : "border-transparent bg-transparent text-[#BAC3C4] hover:border-[#2B434A] hover:bg-[#152027]/70 hover:text-[#F2EEE6]"
-      }`}
-    >
-      <span
-        className={`transition-transform duration-200 group-hover:scale-105 ${
-          active ? "text-[#D4EEE8]" : "text-[#8DA6A9]"
-        }`}
-      >
-        {icon}
-      </span>
-      <span>{label}</span>
-    </button>
-  );
+  const sectionSummary =
+    section === "general"
+      ? "Core dictation controls and defaults."
+      : section === "system"
+        ? "Desktop behavior and app-level options."
+        : section === "models"
+          ? "Download, activate, and manage speech models."
+          : "Coming soon.";
 
   return (
     <div
-      className="relative h-screen overflow-hidden bg-[#090F13] text-[#EFE9DF]"
+      className="relative h-screen overflow-hidden bg-[#0b0c10] text-white"
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_10%,rgba(33,113,102,0.24)_0%,transparent_40%),radial-gradient(circle_at_92%_4%,rgba(183,143,80,0.18)_0%,transparent_35%),linear-gradient(150deg,#0a1115_0%,#111a20_45%,#090d11_100%)]" />
-      <div className="relative flex h-full flex-col sm:flex-row">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_8%,rgba(255,255,255,0.10)_0%,transparent_38%),radial-gradient(circle_at_92%_6%,rgba(143,178,218,0.12)_0%,transparent_30%),linear-gradient(160deg,#0a0b0e_0%,#111317_45%,#0a0b0d_100%)]" />
+
+      <header
+        className="absolute right-4 top-3 z-20 flex items-center gap-2"
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
+        <button className="grid h-8 w-8 place-items-center rounded-lg text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white/90">
+          <Bell className="h-4.5 w-4.5" />
+        </button>
+        <button className="grid h-8 w-8 place-items-center rounded-lg text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white/90">
+          <UserRound className="h-4.5 w-4.5" />
+        </button>
+      </header>
+
+      <div className="relative flex h-full">
         <aside
-          className="w-full shrink-0 border-b border-[#2A353B]/80 bg-[linear-gradient(180deg,rgba(12,18,23,0.95)_0%,rgba(11,17,21,0.92)_100%)] sm:h-full sm:w-[16.5rem] sm:border-b-0 sm:border-r sm:border-[#2A353B]/80"
+          className="hidden w-[14.5rem] border-r border-white/10 bg-black/20 px-2 pb-3 pt-6 backdrop-blur-xl sm:flex sm:flex-col"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <div className="flex h-full flex-col p-4 sm:p-5">
-            <div className="mb-5 flex items-center gap-3 rounded-2xl border border-[#2F4047] bg-[#121B21]/70 px-3 py-3">
-              <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-[#1B6A64] to-[#234652] shadow-[0_10px_28px_rgba(9,18,22,0.55)]">
-                <MicVocal className="h-5 w-5 text-[#EAF6F2]" />
+          <div className="mb-6 px-2">
+            <div className="flex items-center gap-2">
+              <div className="grid h-6 w-6 place-items-center rounded-md bg-white/[0.08]">
+                <Library className="h-3.5 w-3.5 text-white/90" />
               </div>
-              <div>
-                <p className="ow-display text-[1.05rem] leading-none text-[#F4EFE5]">
-                  OpenWispr
-                </p>
-                <p className="mt-1 text-[0.7rem] uppercase tracking-[0.2em] text-[#8EA1A4]">
-                  Desktop Voice
-                </p>
-              </div>
+              <p className="text-[2rem] font-semibold leading-none tracking-tight">Flow</p>
+              <span className="rounded-md border border-white/25 px-2 py-0.5 text-[0.9rem] text-white/78">
+                Local
+              </span>
             </div>
+          </div>
 
-            <nav className="space-y-2">
-              <p className="px-2 text-[0.68rem] uppercase tracking-[0.18em] text-[#7D9195]">
-                Workspace
-              </p>
-              <NavItem
-                active={currentView === "dashboard"}
-                onClick={() => setCurrentView("dashboard")}
-                label="Dashboard"
-                icon={<Sparkles className="h-[1.05rem] w-[1.05rem]" />}
-              />
-              <NavItem
-                active={currentView === "library"}
-                onClick={() => setCurrentView("library")}
-                label="Model Library"
-                icon={<Library className="h-[1.05rem] w-[1.05rem]" />}
-              />
-              <NavItem
-                active={currentView === "settings"}
-                onClick={() => setCurrentView("settings")}
-                label="Settings"
-                icon={<Settings2 className="h-[1.05rem] w-[1.05rem]" />}
-              />
-            </nav>
+          <div className="space-y-1">
+            <AppNavItem
+              active={!settingsOpen}
+              icon={<House className="h-[1.05rem] w-[1.05rem]" />}
+              label="Home"
+              onClick={() => setSettingsOpen(false)}
+            />
+            <AppNavItem
+              icon={<BookText className="h-[1.05rem] w-[1.05rem]" />}
+              label="Dictionary"
+            />
+            <AppNavItem
+              icon={<Scissors className="h-[1.05rem] w-[1.05rem]" />}
+              label="Snippets"
+            />
+            <AppNavItem
+              icon={<Type className="h-[1.05rem] w-[1.05rem]" />}
+              label="Style"
+            />
+            <AppNavItem
+              icon={<NotebookPen className="h-[1.05rem] w-[1.05rem]" />}
+              label="Notes"
+            />
+          </div>
 
-            <div className="mt-4 rounded-2xl border border-[#32444C] bg-[#121B21]/80 p-3.5">
-              <div className="mb-2 flex items-center justify-between text-[0.67rem] uppercase tracking-[0.16em] text-[#8FA3A6]">
-                <span>Current Engine</span>
-                <span className="h-1.5 w-1.5 rounded-full bg-[#65D6B4]" />
-              </div>
-              <p className="truncate text-sm font-medium text-[#F5EFE5]">
-                {activeModelInfo?.name ?? "No model selected"}
-              </p>
-              <p className="mt-1 text-[0.75rem] text-[#9DB0B3]">
-                Runtime: {activeModelInfo?.runtime ?? "whisper.cpp"}
-              </p>
-            </div>
-
-            <div className="mt-auto hidden pt-4 text-[0.75rem] leading-relaxed text-[#91A1A5] sm:block">
-              Hold <span className="rounded bg-[#1A2A31] px-1.5 py-0.5 text-[#DCE8E3]">Fn</span>{" "}
-              to dictate in any app.
-            </div>
+          <div className="mt-auto space-y-1 border-t border-white/10 pt-3">
+            <AppNavItem
+              active={settingsOpen}
+              icon={<Settings2 className="h-[1.05rem] w-[1.05rem]" />}
+              label="Settings"
+              onClick={() => {
+                setSection("general");
+                setSettingsOpen(true);
+              }}
+            />
+            <AppNavItem icon={<CircleHelp className="h-[1.05rem] w-[1.05rem]" />} label="Help" />
           </div>
         </aside>
 
         <main
-          className="relative flex-1 overflow-hidden"
+          className="relative flex flex-1 overflow-hidden p-3 sm:p-5"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <div className="h-full overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
-            <div className="mx-auto w-full max-w-5xl">
-            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="h-full w-full rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-5 backdrop-blur-lg">
+            <div className="mb-4 flex items-center justify-between">
               <div>
-                <p className="mb-2 text-[0.66rem] uppercase tracking-[0.2em] text-[#8EA4A7]">
-                  Voice Control Center
-                </p>
-                <h1 className="ow-display text-[1.7rem] leading-none text-[#F6F1E8] sm:text-[2rem]">
-                  {currentView === "dashboard" && "Model Dashboard"}
-                  {currentView === "library" && "Model Library"}
-                  {currentView === "settings" && "Preferences"}
-                </h1>
-                <p className="mt-2 max-w-2xl text-sm text-[#9BAEB1]">
-                  {currentView === "dashboard" &&
-                    "Monitor installed engines, switch active models, and keep dictation performance ready."}
-                  {currentView === "library" &&
-                    "Download local speech models and activate the best runtime for your machine."}
-                  {currentView === "settings" &&
-                    "Personal controls for your dictation workflow are coming next."}
-                </p>
+                <p className="text-[0.82rem] uppercase tracking-[0.16em] text-white/48">Home</p>
+                <h1 className="text-[2rem] font-semibold leading-tight text-white/96">OpenWispr</h1>
               </div>
               <CleanButton
                 onClick={() => {
-                  void loadModels();
+                  setSection("general");
+                  setSettingsOpen(true);
                 }}
-                disabled={loading}
-                className="w-full sm:w-auto"
               >
-                {loading ? (
-                  <span className="inline-flex items-center gap-2">
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                    Refreshing
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-2">
-                    Refresh Data
-                    <ArrowRight className="h-4 w-4" />
-                  </span>
-                )}
+                Open Settings
               </CleanButton>
             </div>
 
-            {error && (
-              <motion.div
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mb-4 rounded-xl border border-[#7C3436] bg-[#3A1618]/70 px-4 py-3 text-sm text-[#F7D9D9]"
-              >
-                {error}
-              </motion.div>
-            )}
-
-            {loading && models.length === 0 ? (
-              <div className="space-y-3">
-                {[...Array(3)].map((_, index) => (
-                  <div
-                    key={`loading-${index}`}
-                    className="h-[84px] animate-pulse rounded-2xl border border-[#2A353B] bg-[#121B21]/70"
-                  />
-                ))}
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[0.78rem] uppercase tracking-[0.16em] text-white/48">Installed</p>
+                <p className="mt-2 text-[1.7rem] font-semibold text-white/96">{downloadedModels.length}</p>
               </div>
-            ) : (
-              <div className="space-y-4">
-                {currentView === "dashboard" && (
-                  <>
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                      {stats.map((stat) => (
-                        <div
-                          key={stat.label}
-                          className="rounded-2xl border border-[#2F4047] bg-[#121B21]/78 p-4 shadow-[0_8px_26px_rgba(7,13,16,0.35)]"
-                        >
-                          <div className="mb-2 flex items-center justify-between text-[#98A9AD]">
-                            <span className="text-[0.7rem] uppercase tracking-[0.14em]">
-                              {stat.label}
-                            </span>
-                            <span className="text-[#8ECFC0]">{stat.icon}</span>
-                          </div>
-                          <p className="truncate text-lg font-semibold text-[#F7F2E8]">
-                            {stat.value}
-                          </p>
-                          <p className="mt-1 text-xs text-[#8EA1A5]">{stat.detail}</p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <section className="rounded-2xl border border-[#2F4047] bg-[#0F171D]/65 p-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <h2 className="ow-display text-xl text-[#F5F1E8]">
-                          Installed Models
-                        </h2>
-                        <span className="rounded-full border border-[#355760] bg-[#15242B] px-2.5 py-1 text-xs text-[#A3BABE]">
-                          {downloadedModels.length} ready
-                        </span>
-                      </div>
-
-                      {downloadedModels.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-[#355760] bg-[#121D24]/60 px-4 py-8 text-center">
-                          <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-[#16343D]">
-                            <Download className="h-5 w-5 text-[#A4D4C8]" />
-                          </div>
-                          <p className="text-sm text-[#E8E1D5]">
-                            No model installed yet.
-                          </p>
-                          <p className="mt-1 text-xs text-[#95A7AA]">
-                            Start with `base` for balance or `large-v3-turbo` for accuracy.
-                          </p>
-                          <CleanButton
-                            onClick={() => setCurrentView("library")}
-                            className="mt-4"
-                          >
-                            Open Library
-                          </CleanButton>
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {downloadedModels.map((model) => (
-                            <ModelCardGeneric
-                              key={model.name}
-                              model={model}
-                              isActive={activeModel === model.name}
-                              onAction={() => onSelectModel(model.name)}
-                              actionLabel={activeModel === model.name ? "Active" : "Activate"}
-                              actionDisabled={activeModel === model.name}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  </>
-                )}
-
-                {currentView === "library" && (
-                  <section className="rounded-2xl border border-[#2F4047] bg-[#0F171D]/65 p-4">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <h2 className="ow-display text-xl text-[#F5F1E8]">Available Models</h2>
-                      {activeDownload && (
-                        <span className="rounded-full border border-[#3C5660] bg-[#16242B] px-2.5 py-1 text-xs text-[#AAC2C4]">
-                          Downloading {activeDownloadProgress?.percent?.toFixed(0) ?? "0"}%
-                        </span>
-                      )}
-                    </div>
-                    <div className="space-y-3">
-                      {libraryModels.map((model) => (
-                        <ModelCardGeneric
-                          key={model.name}
-                          model={model}
-                          isDownloading={activeDownload === model.name}
-                          downloadProgress={downloadProgress[model.name]}
-                          onAction={() => onDownload(model.name)}
-                          actionLabel={
-                            activeDownload === model.name ? "Downloading" : "Download"
-                          }
-                          actionDisabled={!!activeDownload}
-                        />
-                      ))}
-                    </div>
-                    {libraryModels.length === 0 && (
-                      <div className="rounded-xl border border-dashed border-[#355760] bg-[#121D24]/60 px-4 py-10 text-center">
-                        <p className="text-sm text-[#E8E1D5]">All available models are installed.</p>
-                        <p className="mt-1 text-xs text-[#95A7AA]">
-                          Switch back to Dashboard to activate another model.
-                        </p>
-                      </div>
-                    )}
-                  </section>
-                )}
-
-                {currentView === "settings" && (
-                  <section className="rounded-2xl border border-[#2F4047] bg-[#0F171D]/65 p-4">
-                    <h2 className="ow-display text-xl text-[#F5F1E8]">Preferences</h2>
-                    <p className="mt-1 text-sm text-[#98A9AD]">
-                      This panel is next on roadmap. Current controls are available through model
-                      management and your OS permissions.
-                    </p>
-
-                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div className="rounded-xl border border-[#31434A] bg-[#111B21] p-3">
-                        <p className="text-xs uppercase tracking-[0.14em] text-[#8EA2A5]">
-                          Hotkey
-                        </p>
-                        <p className="mt-1 text-sm text-[#F2EBDD]">Hold Fn to dictate</p>
-                      </div>
-                      <div className="rounded-xl border border-[#31434A] bg-[#111B21] p-3">
-                        <p className="text-xs uppercase tracking-[0.14em] text-[#8EA2A5]">
-                          Paste Mode
-                        </p>
-                        <p className="mt-1 text-sm text-[#F2EBDD]">
-                          Clipboard-preserving insertion
-                        </p>
-                      </div>
-                    </div>
-                  </section>
-                )}
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[0.78rem] uppercase tracking-[0.16em] text-white/48">Available</p>
+                <p className="mt-2 text-[1.7rem] font-semibold text-white/96">{installableModels.length}</p>
               </div>
-            )}
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[0.78rem] uppercase tracking-[0.16em] text-white/48">Active runtime</p>
+                <p className="mt-2 truncate text-[1.1rem] font-semibold text-white/96">
+                  {activeModelInfo?.runtime ?? "None"}
+                </p>
+                <p className="mt-1 truncate text-[0.9rem] text-white/58">{activeModelInfo?.name ?? "No active model"}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="mb-3 text-[0.86rem] uppercase tracking-[0.16em] text-white/48">Installed models</p>
+              <div className="space-y-2">
+                {downloadedModels.length === 0 && (
+                  <p className="text-white/60">No downloaded models yet.</p>
+                )}
+                {downloadedModels.map((model) => {
+                  const isActive = activeModel === model.name;
+                  return (
+                    <div key={model.name} className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5">
+                      <div>
+                        <p className="text-[1rem] font-medium text-white/92">{model.name}</p>
+                        <p className="text-[0.9rem] text-white/56">{MODEL_SIZE_HINTS[model.name] || "Unknown size"} · {model.runtime ?? "whisper.cpp"}</p>
+                      </div>
+                      <CleanButton
+                        onClick={() => {
+                          if (!isActive) void onSelectModel(model.name);
+                        }}
+                        disabled={isActive}
+                        className="min-w-[8rem]"
+                      >
+                        {isActive ? "Active" : "Activate"}
+                      </CleanButton>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
+
+          {settingsOpen && (
+            <div
+              className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-3 sm:p-5"
+              onClick={() => setSettingsOpen(false)}
+            >
+              <div
+                className="h-[min(90vh,760px)] w-full max-w-[1110px] rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-3 shadow-[0_30px_70px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="grid h-full overflow-hidden rounded-[1.15rem] border border-white/10 bg-[#13151a]/95 sm:grid-cols-[16.8rem_1fr]">
+                  <section className="border-b border-white/10 bg-white/[0.02] px-3 py-3 sm:border-b-0 sm:border-r sm:px-4 sm:py-5">
+                    <p className="mb-3 text-[0.84rem] font-semibold uppercase tracking-[0.16em] text-white/48">
+                      Settings
+                    </p>
+
+                    <div className="space-y-1">
+                      <SettingsNavItem
+                        active={section === "general"}
+                        icon={<SlidersHorizontal className="h-[1.05rem] w-[1.05rem]" />}
+                        label="General"
+                        onClick={() => setSection("general")}
+                      />
+                      <SettingsNavItem
+                        active={section === "system"}
+                        icon={<Monitor className="h-[1.05rem] w-[1.05rem]" />}
+                        label="System"
+                        onClick={() => setSection("system")}
+                      />
+                      <SettingsNavItem
+                        active={section === "models"}
+                        icon={<Hash className="h-[1.05rem] w-[1.05rem]" />}
+                        label="Models"
+                        onClick={() => setSection("models")}
+                      />
+                    </div>
+
+                    <div className="my-4 h-px bg-white/10" />
+
+                    <p className="mb-2 text-[0.84rem] font-semibold uppercase tracking-[0.16em] text-white/48">
+                      Account
+                    </p>
+                    <div className="space-y-1">
+                      <SettingsNavItem
+                        active={section === "account"}
+                        icon={<UserRound className="h-[1.05rem] w-[1.05rem]" />}
+                        label="Account"
+                        onClick={() => setSection("account")}
+                      />
+                      <SettingsNavItem
+                        active={section === "team"}
+                        icon={<Users className="h-[1.05rem] w-[1.05rem]" />}
+                        label="Team"
+                        onClick={() => setSection("team")}
+                      />
+                      <SettingsNavItem
+                        active={section === "billing"}
+                        icon={<CreditCard className="h-[1.05rem] w-[1.05rem]" />}
+                        label="Plans and Billing"
+                        onClick={() => setSection("billing")}
+                      />
+                      <SettingsNavItem
+                        active={section === "privacy"}
+                        icon={<ShieldCheck className="h-[1.05rem] w-[1.05rem]" />}
+                        label="Data and Privacy"
+                        onClick={() => setSection("privacy")}
+                      />
+                    </div>
+                  </section>
+
+                  <section className="min-h-0 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
+                    <div className="mb-4 sm:mb-5 flex items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-[2rem] font-semibold tracking-tight text-white/96">
+                          {selectedSectionTitle}
+                        </h2>
+                        <p className="mt-1 text-[1.02rem] text-white/62">{sectionSummary}</p>
+                      </div>
+                      <CleanButton onClick={() => setSettingsOpen(false)} className="min-w-[7rem]">
+                        Close
+                      </CleanButton>
+                    </div>
+
+                    {error && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mb-4 rounded-xl border border-[#7C3436] bg-[#3A1618]/70 px-4 py-3 text-sm text-[#F7D9D9]"
+                      >
+                        {error}
+                      </motion.div>
+                    )}
+
+                    {loading && models.length === 0 ? (
+                      <div className="space-y-2">
+                        {[...Array(4)].map((_, idx) => (
+                          <div
+                            key={`skeleton-${idx}`}
+                            className="h-[4.75rem] animate-pulse rounded-xl border border-white/10 bg-white/[0.03]"
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        {(section === "general" || section === "system") && (
+                          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 sm:px-5">
+                            <SettingsRow
+                              title="Keyboard shortcuts"
+                              description="Hold Fn and speak. Learn more soon."
+                              actionLabel="Change"
+                            />
+                            <SettingsRow
+                              title="Microphone"
+                              description="Use your system default input device."
+                              actionLabel="Change"
+                            />
+                            <SettingsRow
+                              title="Languages"
+                              description="English (auto detect planned)."
+                              actionLabel="Change"
+                            />
+                            <SettingsRow
+                              title="Active model"
+                              description={
+                                activeModelInfo
+                                  ? `${activeModelInfo.name} · ${activeModelInfo.runtime ?? "whisper.cpp"}`
+                                  : "No model selected"
+                              }
+                              actionLabel="Choose"
+                              onAction={() => setSection("models")}
+                            />
+                          </div>
+                        )}
+
+                        {section === "models" && (
+                          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 sm:px-5">
+                            <SettingsRow
+                              compact
+                              title="Installed models"
+                              description={`${downloadedModels.length} installed`}
+                              actionLabel={
+                                <span className="inline-flex items-center gap-2">
+                                  Refresh
+                                  <ArrowRight className="h-4 w-4" />
+                                </span>
+                              }
+                              onAction={() => {
+                                void loadModels();
+                              }}
+                              actionDisabled={loading}
+                            />
+
+                            {libraryModels.map((model) => {
+                              const isActive = activeModel === model.name;
+                              const isDownloading = activeDownload === model.name;
+                              const busy = !!activeDownload && !isDownloading;
+                              const percent =
+                                typeof downloadProgress[model.name]?.percent === "number"
+                                  ? Math.round(downloadProgress[model.name].percent ?? 0)
+                                  : 0;
+
+                              return (
+                                <SettingsRow
+                                  key={model.name}
+                                  compact
+                                  title={model.name}
+                                  description={`${MODEL_SIZE_HINTS[model.name] || "Unknown size"} · ${model.runtime ?? "whisper.cpp"}`}
+                                  actionLabel={
+                                    isActive
+                                      ? "Active"
+                                      : isDownloading
+                                        ? (
+                                            <span className="inline-flex items-center gap-2">
+                                              <LoaderCircle className="h-4 w-4 animate-spin" />
+                                              {percent}%
+                                            </span>
+                                          )
+                                        : model.downloaded
+                                          ? "Activate"
+                                          : "Download"
+                                  }
+                                  onAction={() => {
+                                    if (isActive || busy) return;
+                                    if (model.downloaded) {
+                                      void onSelectModel(model.name);
+                                    } else {
+                                      void onDownload(model.name);
+                                    }
+                                  }}
+                                  actionDisabled={isActive || busy}
+                                />
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {(section === "account" ||
+                          section === "team" ||
+                          section === "billing" ||
+                          section === "privacy") && (
+                          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-8 text-center">
+                            <p className="text-[1.1rem] font-medium text-white/92">
+                              {selectedSectionTitle}
+                            </p>
+                            <p className="mt-2 text-[0.98rem] text-white/58">
+                              This section is planned. Core dictation and model controls are live now.
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
-    </div>
-  );
-}
-
-function ModelCardGeneric({
-  model,
-  isActive,
-  isDownloading,
-  downloadProgress,
-  onAction,
-  actionLabel,
-  actionDisabled,
-}: {
-  model: ModelInfo;
-  isActive?: boolean;
-  isDownloading?: boolean;
-  downloadProgress?: ModelDownloadProgressEvent;
-  onAction: () => void;
-  actionLabel: React.ReactNode;
-  actionDisabled?: boolean;
-}) {
-  const percent =
-    typeof downloadProgress?.percent === "number"
-      ? Math.max(0, Math.min(100, downloadProgress.percent))
-      : 0;
-  const runtime = model.runtime ?? "whisper.cpp";
-  const note = model.note ?? model.notes;
-
-  return (
-    <div
-      className={`relative overflow-hidden rounded-2xl border transition-all duration-300 ${
-        isActive
-          ? "border-[#4A736D] bg-[linear-gradient(130deg,rgba(25,56,57,0.7)_0%,rgba(14,30,36,0.75)_65%)]"
-          : "border-[#2F4047] bg-[linear-gradient(140deg,rgba(17,27,33,0.82)_0%,rgba(13,20,25,0.78)_100%)] hover:border-[#44616B]"
-      }`}
-    >
-      <div className="relative z-10 flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between sm:p-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-[#F6F1E8] sm:text-base">
-              {model.name}
-            </h3>
-            {isActive && (
-              <span className="rounded-full border border-[#4A736D] bg-[#1C3A39]/80 px-2 py-[0.12rem] text-[0.64rem] uppercase tracking-[0.14em] text-[#BCE0D5]">
-                Active
-              </span>
-            )}
-            {model.distro && (
-              <span className="rounded-full border border-[#3A4A51] bg-[#162228] px-2 py-[0.12rem] text-[0.64rem] uppercase tracking-[0.14em] text-[#AABABE]">
-                {model.distro}
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#A3B4B8]">
-            <span className="inline-flex items-center gap-1 rounded-md border border-[#33444B] bg-[#141F25] px-2 py-1">
-              <Download className="h-3.5 w-3.5" />
-              {MODEL_SIZE_HINTS[model.name] || "Unknown size"}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-[#33444B] bg-[#141F25] px-2 py-1">
-              <Cpu className="h-3.5 w-3.5" />
-              {runtime}
-            </span>
-          </div>
-          {note && <p className="mt-2 truncate text-xs text-[#92A3A7]">{note}</p>}
-        </div>
-
-        <CleanButton
-          onClick={onAction}
-          disabled={actionDisabled}
-          className={`w-full sm:w-auto ${
-            isActive
-              ? "border-[#486C67] bg-[#1C3636] text-[#DCEDE8]"
-              : isDownloading
-                ? "border-[#456B75] bg-[#1B323B]"
-                : ""
-          }`}
-        >
-          {isDownloading ? (
-            <span className="inline-flex items-center gap-2">
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-              {Math.round(percent)}%
-            </span>
-          ) : (
-            actionLabel
-          )}
-        </CleanButton>
-      </div>
-
-      {isDownloading && (
-        <div className="absolute bottom-0 left-0 h-[2px] w-full bg-[#132027]">
-          <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${percent}%` }}
-            className="h-full bg-gradient-to-r from-[#5FC9AE] to-[#86DDCF]"
-          />
-        </div>
-      )}
     </div>
   );
 }
