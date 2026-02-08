@@ -199,54 +199,34 @@ const FloatingPill = ({
   return (
     <motion.div
       initial={{ scale: 0.8, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1, y: 0 }}
-      exit={{ scale: 0.96, opacity: 0, y: 12 }}
+      animate={{ scale: 1, opacity: 1 }}
+      exit={{ scale: 0.96, opacity: 0 }}
       transition={{ type: "spring", damping: 26, stiffness: 340, mass: 0.9 }}
       className="fixed bottom-2 left-1/2 z-[999999] -translate-x-1/2"
       onClick={() => {
         if (shouldRecord) onStop();
       }}
     >
-      <AnimatePresence mode="wait">
-        {status === "processing" ? (
-          <motion.div
-            key="transcribing"
-            initial={{ scale: 0.85, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.85, opacity: 0 }}
-            className="flex h-8 w-20 items-center justify-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]"
-          >
-            <div className="flex gap-1.5">
-              <span className="loading-dot" />
-              <span className="loading-dot" />
-              <span className="loading-dot" />
-            </div>
-          </motion.div>
-        ) : status === "error" ? (
-          <motion.div
-            key="error"
-            initial={{ scale: 0.85, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.85, opacity: 0 }}
-            className="flex h-8 min-w-[140px] items-center justify-center rounded-2xl border border-red-300/30 bg-red-500/95 px-[15px] text-white shadow-[0_4px_12px_rgba(255,59,48,0.3)]"
-          >
-            <span className="mr-1.5 text-sm">⚠️</span>
-            <span className="max-w-[220px] truncate text-xs font-medium">
-              {error || "Transcription error"}
-            </span>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="recording"
-            initial={{ scale: 0.85, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.85, opacity: 0 }}
-            className="flex h-8 w-[120px] items-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]"
-          >
-            <JarvisWaveBars audioLevel={audioLevel} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {status === "processing" ? (
+        <div className="flex h-8 w-20 items-center justify-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]">
+          <div className="flex gap-1.5">
+            <span className="loading-dot" />
+            <span className="loading-dot" />
+            <span className="loading-dot" />
+          </div>
+        </div>
+      ) : status === "error" ? (
+        <div className="flex h-8 min-w-[140px] items-center justify-center rounded-2xl border border-red-300/30 bg-red-500/95 px-[15px] text-white shadow-[0_4px_12px_rgba(255,59,48,0.3)]">
+          <span className="mr-1.5 text-sm">⚠️</span>
+          <span className="max-w-[220px] truncate text-xs font-medium">
+            {error || "Transcription error"}
+          </span>
+        </div>
+      ) : (
+        <div className="flex h-8 w-[120px] items-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]">
+          <JarvisWaveBars audioLevel={audioLevel} />
+        </div>
+      )}
     </motion.div>
   );
 };
