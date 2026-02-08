@@ -2,6 +2,8 @@ use serde::Serialize;
 use std::sync::{Mutex, OnceLock};
 use stt::{create_adapter, SttConfig};
 
+const SHERPA_PARAKEET_MODEL: &str = "parakeet-tdt-0.6b-v2";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelInfo {
     pub name: String,
@@ -23,6 +25,10 @@ pub fn active_model_value() -> String {
         .unwrap_or_else(|_| "base".to_string())
 }
 
+fn is_sherpa_model(model: &str) -> bool {
+    model == SHERPA_PARAKEET_MODEL
+}
+
 #[tauri::command]
 pub async fn list_models() -> Result<Vec<ModelInfo>, String> {
     let adapter = create_adapter().map_err(|e| e.to_string())?;
@@ -39,35 +45,21 @@ pub async fn list_models() -> Result<Vec<ModelInfo>, String> {
         });
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let mlx_models = [
-            "mlx-community/whisper-tiny",
-            "mlx-community/whisper-base",
-            "mlx-community/whisper-small",
-            "mlx-community/whisper-medium",
-            "mlx-community/whisper-large-v3-turbo",
-            "mlx-community/whisper-large-v3",
-        ];
-
-        for model in mlx_models {
-            result.push(ModelInfo {
-                name: model.to_string(),
-                runtime: "mlx-whisper".to_string(),
-                downloaded: false,
-                can_download: false,
-                note: Some("MLX runtime in progress".to_string()),
-            });
-        }
-    }
+    result.push(ModelInfo {
+        name: SHERPA_PARAKEET_MODEL.to_string(),
+        runtime: "sherpa-onnx".to_string(),
+        downloaded: false,
+        can_download: false,
+        note: Some("Alternative runtime option (integration pending)".to_string()),
+    });
 
     Ok(result)
 }
 
 #[tauri::command]
 pub async fn download_model(model: String) -> Result<(), String> {
-    if model.starts_with("mlx-community/") {
-        return Err("MLX model downloads are not enabled yet".to_string());
+    if is_sherpa_model(&model) {
+        return Err("Sherpa ONNX model downloads are not enabled yet".to_string());
     }
 
     let mut adapter = create_adapter().map_err(|e| e.to_string())?;
@@ -91,8 +83,8 @@ pub fn get_active_model() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn set_active_model(model: String) -> Result<(), String> {
-    if model.starts_with("mlx-community/") {
-        return Err("MLX model selection is not enabled yet".to_string());
+    if is_sherpa_model(&model) {
+        return Err("Sherpa ONNX runtime selection is not enabled yet".to_string());
     }
 
     let adapter = create_adapter().map_err(|e| e.to_string())?;

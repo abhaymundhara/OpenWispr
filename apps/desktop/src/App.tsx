@@ -30,12 +30,7 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
-  "mlx-community/whisper-tiny": "~75 MB",
-  "mlx-community/whisper-base": "~140 MB",
-  "mlx-community/whisper-small": "~460 MB",
-  "mlx-community/whisper-medium": "~1.5 GB",
-  "mlx-community/whisper-large-v3-turbo": "~1.6 GB",
-  "mlx-community/whisper-large-v3": "~3.1 GB",
+  "parakeet-tdt-0.6b-v2": "~1.0 GB",
 };
 
 const windowLabel =
@@ -284,6 +279,8 @@ function ModelManager() {
   };
 
   const downloadedModels = models.filter((m) => m.downloaded);
+  const whisperLibraryModels = models.filter((m) => m.runtime === "whisper.cpp");
+  const sherpaLibraryModels = models.filter((m) => m.runtime === "sherpa-onnx");
 
   return (
     <div className="h-screen w-screen bg-zinc-950 text-zinc-100 p-6 overflow-auto">
@@ -294,7 +291,7 @@ function ModelManager() {
               Model Manager
             </h1>
             <p className="text-zinc-400 text-sm mt-1">
-              Download Whisper models locally. These stay on-device.
+              Manage local speech models and choose your runtime.
             </p>
           </div>
           <button
@@ -379,21 +376,100 @@ function ModelManager() {
             )}
           </div>
         ) : (
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/80">
-              <div>Model</div>
-              <div>Size</div>
-              <div>Runtime</div>
-              <div className="text-right">Action</div>
-            </div>
-            {loading ? (
-              <div className="px-4 py-8 text-sm text-zinc-400">
-                Loading models...
+          <div className="space-y-4">
+            <div className="rounded-xl border border-zinc-800 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 bg-zinc-900/80 border-b border-zinc-800">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
+                  Whisper.cpp Models
+                </h2>
+                <span className="text-xs text-zinc-500">
+                  Download and run fully on-device
+                </span>
               </div>
-            ) : (
-              models.map((model) => {
-                const downloading = activeDownload === model.name;
-                return (
+              <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/40">
+                <div>Model</div>
+                <div>Size</div>
+                <div>Runtime</div>
+                <div className="text-right">Action</div>
+              </div>
+              {loading ? (
+                <div className="px-4 py-8 text-sm text-zinc-400">
+                  Loading models...
+                </div>
+              ) : (
+                whisperLibraryModels.map((model) => {
+                  const downloading = activeDownload === model.name;
+                  return (
+                    <div
+                      key={model.name}
+                      className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
+                    >
+                      <div>
+                        <div className="font-medium">{model.name}</div>
+                        {model.note && (
+                          <div className="text-xs text-zinc-500 mt-0.5">
+                            {model.note}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-zinc-400 text-sm">
+                        {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
+                      </div>
+                      <div className="text-zinc-400 text-sm">{model.runtime}</div>
+                      <div className="text-right">
+                        <button
+                          className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
+                            model.downloaded
+                              ? "bg-emerald-500/20 text-emerald-300 cursor-default"
+                              : !model.can_download
+                                ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                                : "bg-blue-600 hover:bg-blue-500 text-white"
+                          }`}
+                          disabled={
+                            model.downloaded || downloading || !model.can_download
+                          }
+                          onClick={() => onDownload(model.name)}
+                        >
+                          {model.downloaded
+                            ? "Downloaded"
+                            : !model.can_download
+                              ? "Unavailable"
+                              : downloading
+                                ? "Downloading..."
+                                : "Download"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 bg-zinc-900/80 border-b border-zinc-800">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
+                  Sherpa ONNX Alternatives
+                </h2>
+                <span className="text-xs text-zinc-500">
+                  Alternative engine catalog
+                </span>
+              </div>
+              <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/40">
+                <div>Model</div>
+                <div>Size</div>
+                <div>Runtime</div>
+                <div className="text-right">Action</div>
+              </div>
+              {loading ? (
+                <div className="px-4 py-8 text-sm text-zinc-400">
+                  Loading models...
+                </div>
+              ) : sherpaLibraryModels.length === 0 ? (
+                <div className="px-4 py-8 text-sm text-zinc-400">
+                  No Sherpa ONNX alternatives listed.
+                </div>
+              ) : (
+                sherpaLibraryModels.map((model) => (
                   <div
                     key={model.name}
                     className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
@@ -412,31 +488,16 @@ function ModelManager() {
                     <div className="text-zinc-400 text-sm">{model.runtime}</div>
                     <div className="text-right">
                       <button
-                        className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                          model.downloaded
-                            ? "bg-emerald-500/20 text-emerald-300 cursor-default"
-                            : !model.can_download
-                              ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-                              : "bg-blue-600 hover:bg-blue-500 text-white"
-                        }`}
-                        disabled={
-                          model.downloaded || downloading || !model.can_download
-                        }
-                        onClick={() => onDownload(model.name)}
+                        className="px-3 py-1.5 rounded-md text-sm bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                        disabled
                       >
-                        {model.downloaded
-                          ? "Downloaded"
-                          : !model.can_download
-                            ? "Coming soon"
-                            : downloading
-                              ? "Downloading..."
-                              : "Download"}
+                        Unavailable
                       </button>
                     </div>
                   </div>
-                );
-              })
-            )}
+                ))
+              )}
+            </div>
           </div>
         )}
       </div>
