@@ -6,13 +6,15 @@
   box-sizing: border-box;
 }
 
-:root {
+:root,
+html {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
   color-scheme: light dark;
-  background-color: transparent; /* Allow transparency */
+  background-color: transparent !important;
+  background: transparent !important;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -23,7 +25,8 @@
 #root {
   width: 100%;
   height: 100vh;
-  background-color: transparent;
+  background-color: transparent !important;
+  background: transparent !important;
 }
 
 body {
@@ -31,6 +34,7 @@ body {
   padding: 0;
   width: 100%;
   height: 100vh;
-  background-color: transparent;
+  background-color: transparent !important;
+  background: transparent !important;
   overflow: hidden;
 }

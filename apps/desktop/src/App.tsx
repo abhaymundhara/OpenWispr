@@ -513,6 +513,11 @@ function DictationPillApp() {
   }, []);
 
   useEffect(() => {
+    // Force transparency on mount
+    document.documentElement.style.background = "transparent";
+    document.body.style.background = "transparent";
+    document.getElementById("root")!.style.background = "transparent";
+
     if (fnHeld && !previousFnHeld.current) {
       playStartSound();
     } else if (!fnHeld && previousFnHeld.current) {
@@ -524,8 +529,12 @@ function DictationPillApp() {
   const showPill = fnHeld || sttStatus !== "idle";
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center overflow-visible bg-transparent">
+    <div
+      className="h-screen w-screen flex items-center justify-center overflow-visible bg-transparent"
+      style={{ background: "transparent", backgroundColor: "transparent" }}
+    >
       <style>{`
+        html, body, #root { background: transparent !important; }
         .loading-dot {
           width: 6px;
           height: 6px;
