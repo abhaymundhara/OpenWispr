@@ -148,6 +148,14 @@ fn capture_active_paste_target() {
         eprintln!("[paste] invalid frontmost app pid '{}'", raw_pid.trim());
         return;
     };
+    let self_pid = std::process::id() as i32;
+    if pid == self_pid {
+        eprintln!(
+            "[paste] ignoring self pid {} as paste target (openwispr frontmost)",
+            pid
+        );
+        return;
+    }
 
     let name = Command::new("osascript")
         .arg("-e")

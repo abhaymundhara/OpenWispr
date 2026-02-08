@@ -182,18 +182,9 @@ fn main() {
 
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { api, .. } => {
-            #[cfg(not(debug_assertions))]
-            {
-                // Keep the app alive even when no windows are visible.
-                println!("[lifecycle] exit requested - preventing exit");
-                api.prevent_exit();
-            }
-            #[cfg(debug_assertions)]
-            {
-                let _ = api;
-                // In dev, allow process shutdown to avoid orphaned background instances.
-                println!("[lifecycle] exit requested - allowing exit in debug");
-            }
+            // Keep the app alive even when no windows are visible.
+            println!("[lifecycle] exit requested - preventing exit");
+            api.prevent_exit();
         }
         RunEvent::WindowEvent {
             label,
