@@ -268,13 +268,17 @@ function ModelManager() {
   }, []);
 
   const onDownload = async (model: string) => {
+    console.log("📥 Starting download for model:", model);
     setActiveDownload(model);
     setError(undefined);
     try {
       await invoke("download_model", { model });
+      console.log("✅ Download completed for:", model);
       await loadModels();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error("❌ Download failed:", errorMsg);
+      setError(errorMsg);
     } finally {
       setActiveDownload(undefined);
     }
@@ -456,6 +460,7 @@ function DictationPillApp() {
     const setupListener = async () => {
       try {
         unlistenHold = await listen<boolean>("fn-hold", (event) => {
+          console.log("🎯 fn-hold event received:", event.payload);
           setFnHeld(event.payload);
         });
         unlistenToggle = await listen("global-shortcut-pressed", () => {
@@ -496,15 +501,19 @@ function DictationPillApp() {
   }, []);
 
   useEffect(() => {
+    console.log("🔄 fnHeld state changed:", fnHeld);
     if (fnHeld && !previousFnHeld.current) {
+      console.log("▶️ Starting sound");
       playStartSound();
     } else if (!fnHeld && previousFnHeld.current) {
+      console.log("⏹️ Stopping sound");
       playStopSound();
     }
     previousFnHeld.current = fnHeld;
   }, [fnHeld, playStartSound, playStopSound]);
 
   const showPill = fnHeld || sttStatus !== "idle";
+  console.log("👁️ Render state - fnHeld:", fnHeld, "sttStatus:", sttStatus, "showPill:", showPill);
 
   return (
     <div className="h-screen w-screen flex items-center justify-center overflow-hidden bg-transparent">

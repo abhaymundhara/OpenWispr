@@ -17,6 +17,8 @@ use tokio::sync::Mutex as AsyncMutex;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, IsWindow, SetForegroundWindow,
 };
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::HWND;
 
 // Simple wrapper to make Stream thread-safe
 struct AudioStream {
@@ -172,13 +174,13 @@ fn capture_active_paste_target() {
 #[cfg(target_os = "windows")]
 fn capture_active_paste_target() {
     let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd == 0 {
+    if hwnd.is_null() {
         eprintln!("[paste] GetForegroundWindow returned null");
         return;
     }
     if let Ok(mut slot) = paste_target_slot().lock() {
         println!("[paste] captured foreground HWND 0x{:X}", hwnd as usize);
-        *slot = Some(hwnd);
+        *slot = Some(hwnd as isize);
     }
 }
 
@@ -221,11 +223,12 @@ fn restore_active_paste_target() {
 #[cfg(target_os = "windows")]
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| *slot);
-    let Some(hwnd) = target else {
+    let Some(hwnd_val) = target else {
         eprintln!("[paste] no captured HWND to restore on Windows");
         return;
     };
 
+    let hwnd = hwnd_val as HWND;
     let valid = unsafe { IsWindow(hwnd) != 0 };
     if !valid {
         eprintln!("[paste] captured HWND is no longer valid");
@@ -235,7 +238,7 @@ fn restore_active_paste_target() {
     unsafe {
         let _ = SetForegroundWindow(hwnd);
     }
-    println!("[paste] restored focus to HWND 0x{:X}", hwnd as usize);
+    println!("[paste] restored focus to HWND 0x{:X}", hwnd_val as usize);
     thread::sleep(Duration::from_millis(45));
 }
 

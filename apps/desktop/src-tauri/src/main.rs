@@ -28,6 +28,7 @@ fn show_models_window(app_handle: &tauri::AppHandle<Wry>) {
 
 pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
     if let Some(window) = app_handle.get_window("main") {
+        eprintln!("📺 show_main_overlay_window called");
         if let Ok(Some(monitor)) = window.current_monitor() {
             let monitor_pos = monitor.position();
             let monitor_size = monitor.size();
@@ -63,18 +64,24 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
             let x = center_x.clamp(min_x, max_x.max(min_x));
             let y = bottom_y.clamp(min_y, max_y.max(min_y));
 
+            eprintln!("📍 Positioning window at ({}, {})", x, y);
             let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
         }
-        let _ = window.show();
+        match window.show() {
+            Ok(_) => eprintln!("✅ Main window shown successfully"),
+            Err(e) => eprintln!("❌ Failed to show window: {}", e),
+        }
+    } else {
+        eprintln!("❌ Main window not found!");
     }
 }
 
 fn main() {
-    let mut tray = SystemTray::new();
     #[cfg(target_os = "macos")]
-    {
-        tray = tray.with_icon_as_template(false);
-    }
+    let tray = SystemTray::new().with_icon_as_template(false);
+    
+    #[cfg(not(target_os = "macos"))]
+    let tray = SystemTray::new();
 
     let app = tauri::Builder::default()
         .system_tray(tray)

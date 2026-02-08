@@ -7,17 +7,19 @@ use tauri::{AppHandle, Manager, Wry};
 use crate::audio::{self, AudioCapture};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+use windows_sys::Win32::UI::Input::{
     GetRawInputData, RegisterRawInputDevices, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER,
-    RAWKEYBOARD, RID_INPUT, RIDEV_INPUTSINK, RIM_TYPEKEYBOARD, RI_KEY_BREAK, VK_F22, VK_F23,
-    VK_F24,
+    RAWKEYBOARD, RID_INPUT, RIDEV_INPUTSINK, RIM_TYPEKEYBOARD,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_F22, VK_F23, VK_F24};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
     RegisterClassW, SetWindowLongPtrW, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA,
     MSG, WM_CREATE, WM_DESTROY, WM_INPUT, WNDCLASSW,
 };
 
+/// Keyboard flag indicating key release. Not exported by windows-sys.
+const RI_KEY_BREAK: u16 = 1;
 struct FnHoldState {
     app: AppHandle<Wry>,
     is_down: bool,
@@ -51,9 +53,9 @@ unsafe extern "system" fn wnd_proc(
             let state_ptr = windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(
                 hwnd,
                 GWLP_USERDATA,
-            ) as *mut FnHoldState;
-            if !state_ptr.is_null() {
-                handle_raw_input(lparam, &mut *state_ptr);
+            );
+            if state_ptr != 0 {
+                handle_raw_input(lparam, &mut *(state_ptr as *mut FnHoldState));
             }
             0
         }
@@ -68,8 +70,9 @@ unsafe extern "system" fn wnd_proc(
 unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
     let mut size: u32 = 0;
     let header_size = size_of::<RAWINPUTHEADER>() as u32;
+    let hrawinput = lparam as *mut c_void;
     let res = GetRawInputData(
-        lparam as isize,
+        hrawinput,
         RID_INPUT,
         null_mut(),
         &mut size,
@@ -81,7 +84,7 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
 
     let mut buffer = vec![0u8; size as usize];
     let res = GetRawInputData(
-        lparam as isize,
+        hrawinput,
         RID_INPUT,
         buffer.as_mut_ptr() as *mut c_void,
         &mut size,
@@ -104,14 +107,19 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
 
     if state.debug {
         println!(
-            "RawInput keyboard: vkey=0x{:02X} make=0x{:02X} flags=0x{:02X}",
+            "⚙️  RawInput keyboard: vkey=0x{:02X} make=0x{:02X} flags=0x{:02X}",
             vkey, makecode, flags
         );
     }
 
     if !is_fn_key(vkey, makecode, state) {
+        if state.debug && (vkey == VK_F22 as u16 || vkey == VK_F23 as u16 || vkey == VK_F24 as u16) {
+            println!("⚠️  Detected F22/F23/F24 but is_fn_key returned false");
+        }
         return;
     }
+
+    eprintln!("✨ Fn key detected! vkey=0x{:02X} make=0x{:02X}", vkey, makecode);
 
     let is_down = !is_break;
     if is_down == state.is_down {
@@ -119,24 +127,34 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
     }
 
     state.is_down = is_down;
+    eprintln!("⌨️  Fn key state changed: {}", if is_down { "DOWN" } else { "UP" });
+    
     let _ = state.app.emit_all("fn-hold", is_down);
+    eprintln!("📡 Emitted fn-hold event: {}", is_down);
 
     let capture = state.app.state::<AudioCapture>().inner().clone();
     let app_handle = state.app.clone();
 
     if is_down {
+        eprintln!("🎯 Fn pressed - showing window and starting recording...");
         audio::remember_active_paste_target();
         crate::show_main_overlay_window(&state.app);
+        eprintln!("✅ Window shown");
     }
 
     if is_down {
         if let Err(err) = audio::start_recording_for_capture(&capture, app_handle) {
-            eprintln!("Failed to start recording on Fn press: {}", err);
+            eprintln!("❌ Failed to start recording on Fn press: {}", err);
+        } else {
+            eprintln!("✅ Recording started");
         }
     } else {
+        eprintln!("🛑 Fn released - stopping recording...");
         tauri::async_runtime::spawn(async move {
             if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
-                eprintln!("Failed to stop recording on Fn release: {}", err);
+                eprintln!("❌ Failed to stop recording on Fn release: {}", err);
+            } else {
+                eprintln!("✅ Recording stopped");
             }
         });
     }
@@ -181,9 +199,9 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
             lpszClassName: class_name.as_ptr(),
             cbClsExtra: 0,
             cbWndExtra: 0,
-            hIcon: 0,
-            hCursor: 0,
-            hbrBackground: 0,
+            hIcon: null_mut(),
+            hCursor: null_mut(),
+            hbrBackground: null_mut(),
             lpszMenuName: null_mut(),
         };
         RegisterClassW(&wc);
@@ -197,30 +215,29 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            0,
-            0,
+            null_mut(),
+            null_mut(),
             hinstance,
             state_ptr,
         );
 
-        if hwnd == 0 {
+        if hwnd.is_null() {
             eprintln!("Failed to create Raw Input window.");
             return;
         }
-
         let rid = RAWINPUTDEVICE {
             usUsagePage: 0x01,
             usUsage: 0x06,
             dwFlags: RIDEV_INPUTSINK,
             hwndTarget: hwnd,
         };
-        if RegisterRawInputDevices(&[rid], 1, size_of::<RAWINPUTDEVICE>() as u32) == 0 {
+        if RegisterRawInputDevices(&rid as *const RAWINPUTDEVICE, 1, size_of::<RAWINPUTDEVICE>() as u32) == 0 {
             eprintln!("RegisterRawInputDevices failed.");
             return;
         }
 
         let mut msg: MSG = MaybeUninit::zeroed().assume_init();
-        while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+        while GetMessageW(&mut msg, null_mut(), 0, 0) != 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }

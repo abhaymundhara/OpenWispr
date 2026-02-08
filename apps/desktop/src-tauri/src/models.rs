@@ -66,18 +66,31 @@ pub async fn list_models() -> Result<Vec<ModelInfo>, String> {
 
 #[tauri::command]
 pub async fn download_model(model: String) -> Result<(), String> {
+    eprintln!("🚀 download_model command called for: {}", model);
+    
     if model.starts_with("mlx-community/") {
         return Err("MLX model downloads are not enabled yet".to_string());
     }
 
-    let mut adapter = create_adapter().map_err(|e| e.to_string())?;
+    eprintln!("📦 Creating STT adapter...");
+    let mut adapter = create_adapter().map_err(|e| {
+        eprintln!("❌ Failed to create adapter: {}", e);
+        e.to_string()
+    })?;
+    
+    eprintln!("🔧 Initializing adapter with model: {}", model);
     adapter
         .initialize(SttConfig {
-            model_name: model,
+            model_name: model.clone(),
             ..Default::default()
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            eprintln!("❌ Failed to initialize adapter: {}", e);
+            e.to_string()
+        })?;
+    
+    eprintln!("✅ Model {} ready!", model);
     Ok(())
 }
 
