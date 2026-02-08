@@ -1,12 +1,12 @@
 /// Platform-specific STT adapter implementations
 
-#[cfg(any(target_os = "macos", all(target_os = "windows", feature = "vulkan")))]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) mod backend;
 
 #[cfg(target_os = "macos")]
 pub mod mlx;
 
-#[cfg(all(target_os = "windows", feature = "vulkan"))]
+#[cfg(target_os = "windows")]
 pub mod whisper;
 
 pub mod fallback;

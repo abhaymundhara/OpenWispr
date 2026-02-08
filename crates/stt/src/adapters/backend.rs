@@ -492,7 +492,7 @@ fn download_model(model_name: &str, output_path: &Path) -> Result<()> {
             let err_msg = format!("failed to download {url}: {e}");
             eprintln!("❌ Download error: {}", err_msg);
             SttError::ModelLoadError(err_msg)
-        })?
+        })?;
     let mut reader = response.into_reader();
 
     let tmp_path = output_path.with_extension("download");

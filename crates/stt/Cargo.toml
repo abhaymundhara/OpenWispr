@@ -15,8 +15,8 @@ serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 ureq = { version = "2.10", default-features = true }
 [target.'cfg(target_os = "windows")'.dependencies]
-# Hardware acceleration is optional on Windows
-whisper-rs = { version = "0.15", optional = true }
+# whisper-rs is always available on Windows; vulkan is optional acceleration
+whisper-rs = { version = "0.15", default-features = false }
 
 [features]
 default = []

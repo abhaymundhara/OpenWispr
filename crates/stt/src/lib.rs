@@ -114,14 +114,9 @@ pub fn create_adapter() -> Result<Box<dyn SttAdapter>> {
         Ok(Box::new(adapters::mlx::MlxAdapter::new()))
     }
 
-    #[cfg(all(target_os = "windows", feature = "vulkan"))]
+    #[cfg(target_os = "windows")]
     {
         Ok(Box::new(adapters::whisper::WhisperAdapter::new()))
-    }
-
-    #[cfg(all(target_os = "windows", not(feature = "vulkan")))]
-    {
-        Ok(Box::new(adapters::fallback::FallbackAdapter::new()))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
