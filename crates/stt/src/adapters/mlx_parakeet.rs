@@ -12,6 +12,7 @@ use std::sync::Arc;
 use super::backend::{prepare_audio, TARGET_SAMPLE_RATE};
 
 const PYTHON_BIN: &str = "python3";
+const MLX_VENV_DIR: &str = ".venv";
 
 #[derive(Default)]
 struct MlxState {
@@ -184,7 +185,7 @@ fn ensure_parakeet_ready(model_ref: &str, cache_dir: &Path) -> Result<()> {
         error: None,
         message: Some("Preparing parakeet-mlx package".to_string()),
     });
-    ensure_parakeet_package_installed()?;
+    ensure_parakeet_package_installed(cache_dir)?;
 
     let script = r#"
 import sys
@@ -204,18 +205,22 @@ from_pretrained(model_ref, cache_dir=cache_dir)
         message: Some("Downloading MLX model weights".to_string()),
     });
 
-    let output = Command::new(PYTHON_BIN)
+    let python_bin = venv_python_bin(cache_dir);
+    let output = Command::new(&python_bin)
         .args(["-c", script, model_ref, &cache_dir.to_string_lossy()])
         .output()
         .map_err(|e| {
-            SttError::ModelLoadError(format!("failed to start Python for MLX download: {e}"))
+            SttError::ModelLoadError(format!(
+                "failed to start MLX Python runtime ({}): {e}",
+                python_bin.display()
+            ))
         })?;
 
     if !output.status.success() {
         let message = format!(
             "failed to download/load MLX model '{}': {}",
             model_ref,
-            String::from_utf8_lossy(&output.stderr).trim()
+            compact_python_error(&output.stderr)
         );
         emit_model_download_progress(ModelDownloadProgress {
             model_name: model_ref.to_string(),
@@ -265,7 +270,8 @@ if text is None:
 print((text or "").strip())
 "#;
 
-    let output = Command::new(PYTHON_BIN)
+    let python_bin = venv_python_bin(cache_dir);
+    let output = Command::new(&python_bin)
         .args([
             "-c",
             script,
@@ -275,13 +281,16 @@ print((text or "").strip())
         ])
         .output()
         .map_err(|e| {
-            SttError::TranscriptionFailed(format!("failed to start Python for MLX transcription: {e}"))
+            SttError::TranscriptionFailed(format!(
+                "failed to start MLX Python runtime ({}): {e}",
+                python_bin.display()
+            ))
         })?;
 
     if !output.status.success() {
         return Err(SttError::TranscriptionFailed(format!(
             "MLX transcription failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            compact_python_error(&output.stderr)
         )));
     }
 
@@ -315,25 +324,28 @@ fn ensure_python_available() -> Result<()> {
     ))
 }
 
-fn ensure_parakeet_package_installed() -> Result<()> {
-    let check = Command::new(PYTHON_BIN)
+fn ensure_parakeet_package_installed(cache_dir: &Path) -> Result<()> {
+    let python_bin = ensure_venv_ready(cache_dir)?;
+    let check = Command::new(&python_bin)
         .args(["-c", "import parakeet_mlx"])
         .output()
         .map_err(|e| {
             SttError::ModelLoadError(format!(
-                "failed to probe parakeet-mlx Python package: {e}"
+                "failed to probe parakeet-mlx in MLX runtime ({}): {e}",
+                python_bin.display()
             ))
         })?;
     if check.status.success() {
         return Ok(());
     }
 
-    let install = Command::new(PYTHON_BIN)
+    let install = Command::new(&python_bin)
         .args(["-m", "pip", "install", "--upgrade", "parakeet-mlx"])
         .output()
         .map_err(|e| {
             SttError::ModelLoadError(format!(
-                "failed to install parakeet-mlx with pip: {e}"
+                "failed to install parakeet-mlx in MLX runtime ({}): {e}",
+                python_bin.display()
             ))
         })?;
     if install.status.success() {
@@ -342,8 +354,71 @@ fn ensure_parakeet_package_installed() -> Result<()> {
 
     Err(SttError::ModelLoadError(format!(
         "failed to install parakeet-mlx: {}",
-        String::from_utf8_lossy(&install.stderr).trim()
+        compact_python_error(&install.stderr)
     )))
+}
+
+fn ensure_venv_ready(cache_dir: &Path) -> Result<PathBuf> {
+    let python_bin = venv_python_bin(cache_dir);
+    if python_bin.exists() {
+        return Ok(python_bin);
+    }
+
+    if !cache_dir.exists() {
+        fs::create_dir_all(cache_dir).map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "failed to create MLX cache directory {}: {e}",
+                cache_dir.display()
+            ))
+        })?;
+    }
+
+    let venv_dir = cache_dir.join(MLX_VENV_DIR);
+    let create = Command::new(PYTHON_BIN)
+        .args(["-m", "venv", &venv_dir.to_string_lossy()])
+        .output()
+        .map_err(|e| {
+            SttError::ModelLoadError(format!(
+                "failed to create MLX virtualenv with {PYTHON_BIN}: {e}"
+            ))
+        })?;
+
+    if !create.status.success() {
+        return Err(SttError::ModelLoadError(format!(
+            "failed to create MLX virtualenv: {}",
+            compact_python_error(&create.stderr)
+        )));
+    }
+
+    if !python_bin.exists() {
+        return Err(SttError::ModelLoadError(format!(
+            "MLX virtualenv created but interpreter missing at {}",
+            python_bin.display()
+        )));
+    }
+
+    Ok(python_bin)
+}
+
+fn venv_python_bin(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(MLX_VENV_DIR).join("bin").join("python3")
+}
+
+fn compact_python_error(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let first_line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("unknown Python error");
+
+    const MAX_LEN: usize = 220;
+    if first_line.chars().count() > MAX_LEN {
+        let clipped: String = first_line.chars().take(MAX_LEN).collect();
+        format!("{clipped}...")
+    } else {
+        first_line.to_string()
+    }
 }
 
 fn marker_file_path(model_ref: &str) -> Result<PathBuf> {
