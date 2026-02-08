@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
-use tauri::{Manager, RunEvent, SystemTray, SystemTrayEvent, SystemTrayMenu, CustomMenuItem, Wry};
+use tauri::{Manager, RunEvent, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, CustomMenuItem, Wry};
 
 mod audio;
 #[cfg(target_os = "macos")]
@@ -16,9 +16,15 @@ mod fn_key_macos;
 #[cfg(target_os = "windows")]
 mod fn_key_windows;
 mod models;
-mod logger;
 use audio::AudioCapture;
-use logger::log_session_start;
+
+fn verbose_logs_enabled() -> bool {
+    std::env::var("OPENWISPR_VERBOSE_LOGS")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
 
 fn show_models_window(app_handle: &tauri::AppHandle<Wry>) {
     if let Some(window) = app_handle.get_window("models") {
@@ -30,7 +36,6 @@ fn show_models_window(app_handle: &tauri::AppHandle<Wry>) {
 
 pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
     if let Some(window) = app_handle.get_window("main") {
-        eprintln!("📺 show_main_overlay_window called");
         if let Ok(Some(monitor)) = window.current_monitor() {
             let monitor_pos = monitor.position();
             let monitor_size = monitor.size();
@@ -49,7 +54,7 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
             };
 
             #[cfg(target_os = "macos")]
-            let bottom_margin: i32 = 180;
+            let bottom_margin: i32 = 200;
             #[cfg(target_os = "windows")]
             let bottom_margin: i32 = 180;
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -66,62 +71,40 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
             let x = center_x.clamp(min_x, max_x.max(min_x));
             let y = bottom_y.clamp(min_y, max_y.max(min_y));
 
-            eprintln!("📍 Positioning window at ({}, {})", x, y);
             let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
         }
-        match window.show() {
-            Ok(_) => eprintln!("✅ Main window shown successfully"),
-            Err(e) => eprintln!("❌ Failed to show window: {}", e),
-        }
-    } else {
-        eprintln!("❌ Main window not found!");
+        let _ = window.show();
     }
 }
 
-#[tauri::command]
-fn show_main_window(app: tauri::AppHandle<Wry>) {
-    show_main_overlay_window(&app);
-}
-
 fn main() {
-    let start_dictation = CustomMenuItem::new("start_dictation".to_string(), "Start Dictation (Hold Ctrl+Fn)");
-    let open_models = CustomMenuItem::new("open_models".to_string(), "Model Manager");
+    let dashboard = CustomMenuItem::new("dashboard".to_string(), "Dashboard");
     let quit = CustomMenuItem::new("quit".to_string(), "Quit");
     
     let tray_menu = SystemTrayMenu::new()
-        .add_item(start_dictation)
-        .add_item(open_models)
-        .add_native_item(tauri::SystemTrayMenuItem::Separator)
+        .add_item(dashboard)
+        .add_native_item(SystemTrayMenuItem::Separator)
         .add_item(quit);
-
-    #[cfg(target_os = "macos")]
-    let tray = SystemTray::new()
-        .with_icon_as_template(false)
-        .with_menu(tray_menu);
     
-    #[cfg(not(target_os = "macos"))]
-    let tray = SystemTray::new().with_menu(tray_menu);
+    let mut tray = SystemTray::new().with_menu(tray_menu);
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray.with_icon_as_template(false);
+    }
 
     let app = tauri::Builder::default()
         .system_tray(tray)
         .on_system_tray_event(|app_handle, event| match event {
-            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "start_dictation" => {
-                    // Just show instructions - actual recording happens via Ctrl+Fn
-                    show_models_window(app_handle);
+            SystemTrayEvent::MenuItemClick { id, .. } => {
+                match id.as_str() {
+                    "dashboard" => {
+                        show_models_window(app_handle);
+                    }
+                    "quit" => {
+                        app_handle.exit(0);
+                    }
+                    _ => {}
                 }
-                "open_models" => {
-                    show_models_window(app_handle);
-                }
-                "quit" => {
-                    std::process::exit(0);
-                }
-                _ => {}
-            }
-            SystemTrayEvent::LeftClick { .. }
-            | SystemTrayEvent::RightClick { .. }
-            | SystemTrayEvent::DoubleClick { .. } => {
-                show_models_window(app_handle);
             }
             _ => {}
         })
@@ -131,6 +114,17 @@ fn main() {
                 // Keep overlay non-interactive so it does not block the active app
                 // while still allowing us to keep the process alive.
                 let _ = main_window.set_ignore_cursor_events(true);
+
+                #[cfg(target_os = "macos")]
+                {
+                    use cocoa::appkit::NSWindow;
+                    use cocoa::base::id;
+                    
+                    let ns_window = main_window.ns_window().unwrap() as id;
+                    unsafe {
+                        ns_window.setHasShadow_(cocoa::base::NO);
+                    }
+                }
             }
 
             #[cfg(target_os = "macos")]
@@ -139,26 +133,13 @@ fn main() {
                 app.set_activation_policy(ActivationPolicy::Accessory);
             }
 
-            println!("\n==============================================");
-            println!("🎙️  OpenWispr Starting...");
-            println!("==============================================");
-            #[cfg(target_os = "macos")]
-            println!("Press and hold Fn to dictate");
-            #[cfg(target_os = "windows")]
-            {
-                println!("🎮 Hold Ctrl + Shift together to start dictation");
-                println!("   Release either key to stop and transcribe");
-                println!("   All keystrokes are logged to console for debugging");
+            if verbose_logs_enabled() {
+                println!("\n==============================================");
+                println!("🎙️  OpenWispr Starting...");
+                println!("==============================================");
+                println!("Press and hold Fn to dictate");
+                println!("==============================================\n");
             }
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            println!("Press Control to toggle dictation");
-            println!("==============================================\n");
-
-            // Initialize logging
-            log_session_start();
-
-            // Show models window on startup
-            show_models_window(&handle);
 
             #[cfg(target_os = "macos")]
             {
@@ -229,40 +210,36 @@ fn main() {
             models::list_models,
             models::download_model,
             models::get_active_model,
-            models::set_active_model,
-            show_main_window
+            models::set_active_model
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| match event {
         RunEvent::ExitRequested { api, .. } => {
-            #[cfg(not(debug_assertions))]
-            {
-                // Keep the app alive even when no windows are visible.
+            // Keep the app alive even when no windows are visible.
+            if verbose_logs_enabled() {
                 println!("[lifecycle] exit requested - preventing exit");
-                api.prevent_exit();
             }
-            #[cfg(debug_assertions)]
-            {
-                let _ = api;
-                // In dev, allow process shutdown to avoid orphaned background instances.
-                println!("[lifecycle] exit requested - allowing exit in debug");
-            }
+            api.prevent_exit();
         }
         RunEvent::WindowEvent {
             label,
             event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
         } if label == "models" || label == "main" => {
-            println!("[lifecycle] close requested for window '{}' - hiding", label);
+            if verbose_logs_enabled() {
+                println!("[lifecycle] close requested for window '{}' - hiding", label);
+            }
             api.prevent_close();
             if let Some(window) = app_handle.get_window(&label) {
                 let _ = window.hide();
             }
         }
         RunEvent::Exit => {
-            println!("[lifecycle] run loop exiting");
+            if verbose_logs_enabled() {
+                println!("[lifecycle] run loop exiting");
+            }
         }
         _ => {}
     });

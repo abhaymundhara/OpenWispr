@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -13,13 +14,10 @@ use std::time::Duration;
 use stt::{create_adapter, AudioFormat as SttAudioFormat, SttAdapter, SttConfig};
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex as AsyncMutex;
-use crate::logger::{log_info, log_error, SessionLogger};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, IsWindow, SetForegroundWindow,
 };
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::HWND;
 
 // Simple wrapper to make Stream thread-safe
 struct AudioStream {
@@ -35,7 +33,6 @@ pub struct AudioCapture {
     format: Arc<Mutex<SttAudioFormat>>,
     stt_adapter: Arc<AsyncMutex<Option<Box<dyn SttAdapter>>>>,
     loaded_model: Arc<AsyncMutex<Option<String>>>,
-    session_logger: Arc<Mutex<Option<SessionLogger>>>,
 }
 
 impl AudioCapture {
@@ -46,7 +43,6 @@ impl AudioCapture {
             format: Arc::new(Mutex::new(SttAudioFormat::default())),
             stt_adapter: Arc::new(AsyncMutex::new(None)),
             loaded_model: Arc::new(AsyncMutex::new(None)),
-            session_logger: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -59,7 +55,6 @@ impl Clone for AudioCapture {
             format: self.format.clone(),
             stt_adapter: self.stt_adapter.clone(),
             loaded_model: self.loaded_model.clone(),
-            session_logger: self.session_logger.clone(),
         }
     }
 }
@@ -88,14 +83,27 @@ fn emit_transcription_status(app: &AppHandle, status: &str, error: Option<String
     );
 }
 
+fn verbose_logs_enabled() -> bool {
+    std::env::var("OPENWISPR_VERBOSE_LOGS")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
 enum ClipboardSnapshot {
+    Html {
+        html: String,
+        alt_text: String,
+    },
     Text(String),
     Image {
         width: usize,
         height: usize,
         bytes: Vec<u8>,
     },
-    OpaqueOrEmpty,
+    FileList(Vec<PathBuf>),
+    Clear,
 }
 
 #[cfg(target_os = "macos")]
@@ -139,11 +147,15 @@ fn capture_active_paste_target() {
         .arg("tell application \"System Events\" to get unix id of first application process whose frontmost is true")
         .output();
     let Ok(pid_output) = pid_output else {
-        eprintln!("[paste] could not query frontmost app pid with osascript");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] could not query frontmost app pid with osascript");
+        }
         return;
     };
     if !pid_output.status.success() {
-        eprintln!("[paste] osascript query for frontmost app pid failed");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] osascript query for frontmost app pid failed");
+        }
         return;
     }
 
@@ -151,9 +163,21 @@ fn capture_active_paste_target() {
         return;
     };
     let Some(pid) = parse_frontmost_pid(&raw_pid) else {
-        eprintln!("[paste] invalid frontmost app pid '{}'", raw_pid.trim());
+        if verbose_logs_enabled() {
+            eprintln!("[paste] invalid frontmost app pid '{}'", raw_pid.trim());
+        }
         return;
     };
+    let self_pid = std::process::id() as i32;
+    if pid == self_pid {
+        if verbose_logs_enabled() {
+            eprintln!(
+                "[paste] ignoring self pid {} as paste target (openwispr frontmost)",
+                pid
+            );
+        }
+        return;
+    }
 
     let name = Command::new("osascript")
         .arg("-e")
@@ -170,7 +194,9 @@ fn capture_active_paste_target() {
         .unwrap_or_else(|| "<unknown>".to_string());
 
     if let Ok(mut slot) = paste_target_slot().lock() {
-        println!("[paste] captured frontmost app pid={} name='{}'", pid, name);
+        if verbose_logs_enabled() {
+            println!("[paste] captured frontmost app pid={} name='{}'", pid, name);
+        }
         *slot = Some(MacPasteTarget { pid, name });
     }
 }
@@ -178,13 +204,17 @@ fn capture_active_paste_target() {
 #[cfg(target_os = "windows")]
 fn capture_active_paste_target() {
     let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.is_null() {
-        eprintln!("[paste] GetForegroundWindow returned null");
+    if hwnd == 0 {
+        if verbose_logs_enabled() {
+            eprintln!("[paste] GetForegroundWindow returned null");
+        }
         return;
     }
     if let Ok(mut slot) = paste_target_slot().lock() {
-        println!("[paste] captured foreground HWND 0x{:X}", hwnd as usize);
-        *slot = Some(hwnd as isize);
+        if verbose_logs_enabled() {
+            println!("[paste] captured foreground HWND 0x{:X}", hwnd as usize);
+        }
+        *slot = Some(hwnd);
     }
 }
 
@@ -196,33 +226,12 @@ pub fn remember_active_paste_target() {
 }
 
 #[cfg(target_os = "macos")]
-fn get_paste_target_description() -> String {
-    paste_target_slot()
-        .lock()
-        .ok()
-        .and_then(|slot| slot.as_ref().map(|t| format!("macOS app '{}' (PID: {})", t.name, t.pid)))
-        .unwrap_or_else(|| "unknown target".to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn get_paste_target_description() -> String {
-    paste_target_slot()
-        .lock()
-        .ok()
-        .and_then(|slot| slot.map(|hwnd| format!("Windows HWND 0x{:X}", hwnd as usize)))
-        .unwrap_or_else(|| "unknown target".to_string())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn get_paste_target_description() -> String {
-    "unknown target".to_string()
-}
-
-#[cfg(target_os = "macos")]
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
     let Some(target) = target else {
-        eprintln!("[paste] no captured app to restore on macOS");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] no captured app to restore on macOS");
+        }
         return;
     };
 
@@ -233,16 +242,18 @@ fn restore_active_paste_target() {
             target.pid
         ))
         .status();
-    if result.as_ref().is_ok_and(|status| status.success()) {
+    if result.as_ref().is_ok_and(|status| status.success()) && verbose_logs_enabled() {
         println!(
             "[paste] restored focus to app pid={} name='{}'",
             target.pid, target.name
         );
     } else {
-        eprintln!(
-            "[paste] failed to restore focus to app pid={} name='{}'",
-            target.pid, target.name
-        );
+        if verbose_logs_enabled() {
+            eprintln!(
+                "[paste] failed to restore focus to app pid={} name='{}'",
+                target.pid, target.name
+            );
+        }
     }
     thread::sleep(Duration::from_millis(45));
 }
@@ -250,22 +261,27 @@ fn restore_active_paste_target() {
 #[cfg(target_os = "windows")]
 fn restore_active_paste_target() {
     let target = paste_target_slot().lock().ok().and_then(|slot| *slot);
-    let Some(hwnd_val) = target else {
-        eprintln!("[paste] no captured HWND to restore on Windows");
+    let Some(hwnd) = target else {
+        if verbose_logs_enabled() {
+            eprintln!("[paste] no captured HWND to restore on Windows");
+        }
         return;
     };
 
-    let hwnd = hwnd_val as HWND;
     let valid = unsafe { IsWindow(hwnd) != 0 };
     if !valid {
-        eprintln!("[paste] captured HWND is no longer valid");
+        if verbose_logs_enabled() {
+            eprintln!("[paste] captured HWND is no longer valid");
+        }
         return;
     }
 
     unsafe {
         let _ = SetForegroundWindow(hwnd);
     }
-    println!("[paste] restored focus to HWND 0x{:X}", hwnd_val as usize);
+    if verbose_logs_enabled() {
+        println!("[paste] restored focus to HWND 0x{:X}", hwnd as usize);
+    }
     thread::sleep(Duration::from_millis(45));
 }
 
@@ -273,6 +289,11 @@ fn restore_active_paste_target() {
 fn restore_active_paste_target() {}
 
 fn capture_clipboard(clipboard: &mut Clipboard) -> ClipboardSnapshot {
+    if let Ok(html) = clipboard.get().html() {
+        let alt_text = clipboard.get_text().unwrap_or_else(|_| html.clone());
+        return ClipboardSnapshot::Html { html, alt_text };
+    }
+
     if let Ok(text) = clipboard.get_text() {
         return ClipboardSnapshot::Text(text);
     }
@@ -285,26 +306,76 @@ fn capture_clipboard(clipboard: &mut Clipboard) -> ClipboardSnapshot {
         };
     }
 
-    ClipboardSnapshot::OpaqueOrEmpty
+    if let Ok(files) = clipboard.get().file_list() {
+        return ClipboardSnapshot::FileList(files);
+    }
+
+    ClipboardSnapshot::Clear
 }
 
-fn restore_clipboard(clipboard: &mut Clipboard, snapshot: ClipboardSnapshot) {
+fn restore_clipboard(clipboard: &mut Clipboard, snapshot: &ClipboardSnapshot) -> Result<(), String> {
     match snapshot {
-        ClipboardSnapshot::Text(text) => {
-            let _ = clipboard.set_text(text);
-        }
+        ClipboardSnapshot::Html { html, alt_text } => clipboard
+            .set()
+            .html(html.clone(), Some(alt_text.clone()))
+            .map_err(|e| format!("failed to restore html clipboard: {}", e)),
+        ClipboardSnapshot::Text(text) => clipboard
+            .set_text(text.clone())
+            .map_err(|e| format!("failed to restore text clipboard: {}", e)),
         ClipboardSnapshot::Image {
             width,
             height,
             bytes,
-        } => {
-            let _ = clipboard.set_image(ImageData {
-                width,
-                height,
-                bytes: Cow::Owned(bytes),
-            });
+        } => clipboard
+            .set_image(ImageData {
+                width: *width,
+                height: *height,
+                bytes: Cow::Borrowed(bytes.as_slice()),
+            })
+            .map_err(|e| format!("failed to restore image clipboard: {}", e)),
+        ClipboardSnapshot::FileList(paths) => clipboard
+            .set()
+            .file_list(paths)
+            .map_err(|e| format!("failed to restore file list clipboard: {}", e)),
+        ClipboardSnapshot::Clear => clipboard
+            .clear()
+            .map_err(|e| format!("failed to clear clipboard during restore: {}", e)),
+    }
+}
+
+fn restore_clipboard_with_retry(snapshot: ClipboardSnapshot) {
+    for attempt in 1..=10 {
+        let mut clipboard = match Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(err) => {
+                if verbose_logs_enabled() {
+                    eprintln!(
+                        "[paste] restore attempt {}: clipboard unavailable: {}",
+                        attempt, err
+                    );
+                }
+                thread::sleep(Duration::from_millis(80));
+                continue;
+            }
+        };
+
+        match restore_clipboard(&mut clipboard, &snapshot) {
+            Ok(_) => return,
+            Err(err) => {
+                if verbose_logs_enabled() {
+                    eprintln!(
+                        "[paste] restore attempt {} failed: {}",
+                        attempt, err
+                    );
+                }
+            }
         }
-        ClipboardSnapshot::OpaqueOrEmpty => {}
+
+        thread::sleep(Duration::from_millis(80));
+    }
+
+    if verbose_logs_enabled() {
+        eprintln!("[paste] failed to restore clipboard after retries");
     }
 }
 
@@ -334,28 +405,75 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    // The overlay can become the active app while transcribing. Move focus back
-    // to the app that was active at Fn press before injecting text.
-    restore_active_paste_target();
+    // Step 1: stage transcription in system clipboard while OpenWispr is still active.
+    let mut clipboard = match Clipboard::new() {
+        Ok(clipboard) => clipboard,
+        Err(err) => {
+            if verbose_logs_enabled() {
+                eprintln!("[paste] clipboard unavailable, falling back to direct typing: {}", err);
+            }
+            restore_active_paste_target();
+            insert_text_directly(text);
+            return Ok(());
+        }
+    };
 
-    let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard unavailable: {}", e))?;
     let snapshot = capture_clipboard(&mut clipboard);
 
-    if let ClipboardSnapshot::OpaqueOrEmpty = snapshot {
+    if let Err(err) = clipboard.set_text(text.to_string()) {
+        if verbose_logs_enabled() {
+            eprintln!("[paste] failed to set clipboard: {}", err);
+        }
+        restore_active_paste_target();
         insert_text_directly(text);
         return Ok(());
     }
 
-    clipboard
-        .set_text(text.to_string())
-        .map_err(|e| format!("Failed to set clipboard text: {}", e))?;
+    // Step 2: focus target and paste.
+    let mut paste_done = false;
+    #[cfg(target_os = "macos")]
+    {
+        let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
+        if let Some(target) = target {
+            let script = format!(
+                r#"tell application "System Events"
+    set frontmost of (first application process whose unix id is {}) to true
+    delay 0.08
+    keystroke "v" using command down
+end tell"#,
+                target.pid
+            );
 
-    // Let clipboard managers receive the new value before pasting.
-    thread::sleep(Duration::from_millis(35));
-    trigger_paste_shortcut();
-    // Let target app consume Cmd/Ctrl+V before restoring clipboard.
-    thread::sleep(Duration::from_millis(110));
-    restore_clipboard(&mut clipboard, snapshot);
+            let result = Command::new("osascript")
+                .arg("-e")
+                .arg(&script)
+                .status();
+
+            if result.as_ref().is_ok_and(|status| status.success()) {
+                paste_done = true;
+            } else if verbose_logs_enabled() {
+                eprintln!("[paste] osascript focus+paste failed");
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        restore_active_paste_target();
+        thread::sleep(Duration::from_millis(50));
+        trigger_paste_shortcut();
+        paste_done = true;
+    }
+
+    if !paste_done {
+        restore_active_paste_target();
+        thread::sleep(Duration::from_millis(50));
+        trigger_paste_shortcut();
+    }
+
+    // Step 3: restore original clipboard (reliable retries).
+    thread::sleep(Duration::from_millis(120));
+    restore_clipboard_with_retry(snapshot);
 
     Ok(())
 }
@@ -381,7 +499,9 @@ fn select_input_device(host: &Host) -> Result<Device, String> {
                     .name()
                     .unwrap_or_else(|_| "<unknown input device>".to_string());
                 if name.to_lowercase().contains(&needle) {
-                    println!("[audio] selected input device by env override: {}", name);
+                    if verbose_logs_enabled() {
+                        println!("[audio] selected input device by env override: {}", name);
+                    }
                     return Ok(device);
                 }
             }
@@ -394,10 +514,12 @@ fn select_input_device(host: &Host) -> Result<Device, String> {
 
     let default = host.default_input_device();
     if let Some(device) = default {
-        let name = device
-            .name()
-            .unwrap_or_else(|_| "<unknown input device>".to_string());
-        println!("[audio] selected default input device: {}", name);
+        if verbose_logs_enabled() {
+            let name = device
+                .name()
+                .unwrap_or_else(|_| "<unknown input device>".to_string());
+            println!("[audio] selected default input device: {}", name);
+        }
         return Ok(device);
     }
 
@@ -557,12 +679,6 @@ pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Re
         return Ok(());
     }
 
-    // Create new session logger
-    {
-        let mut logger_guard = capture.session_logger.lock().unwrap();
-        *logger_guard = Some(SessionLogger::new());
-    }
-
     // Get the default audio host
     let host = cpal::default_host();
 
@@ -573,13 +689,14 @@ pub fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle) -> Re
     let config = device
         .default_input_config()
         .map_err(|e| format!("Failed to get input config: {}", e))?;
-    
-    log_info(&format!(
-        "Audio input initialized: {}Hz, {} channels, format={:?}",
-        config.sample_rate().0,
-        config.channels(),
-        config.sample_format()
-    ));
+    if verbose_logs_enabled() {
+        println!(
+            "[audio] input format sample_rate={} channels={} sample_format={:?}",
+            config.sample_rate().0,
+            config.channels(),
+            config.sample_format()
+        );
+    }
 
     // Reset buffered samples and capture format for the next transcription run.
     {
@@ -692,14 +809,15 @@ pub async fn stop_recording_for_capture(
         stream_lock.stream.take().is_some()
     };
     if !had_stream {
+        if verbose_logs_enabled() {
+            println!("[stt] stop_recording called but no active stream");
+        }
         return Ok(());
     }
 
-    // Get the session logger
-    let logger: Option<SessionLogger> = {
-        capture.session_logger.lock().unwrap().clone()
-    };
-
+    if verbose_logs_enabled() {
+        println!("[stt] stop_recording: stream stopped, starting transcription");
+    }
     emit_transcription_status(&app, "processing", None);
 
     let audio_data = {
@@ -708,11 +826,11 @@ pub async fn stop_recording_for_capture(
     };
 
     if audio_data.is_empty() {
-        if let Some(ref logger) = logger {
-            logger.log_audio_empty();
+        if verbose_logs_enabled() {
+            println!("[stt] no audio captured, skipping transcription");
         }
-        log_error("No audio captured, skipping transcription");
         emit_transcription_status(&app, "idle", None);
+        // Let UI hide window
         return Ok(());
     }
 
@@ -720,41 +838,39 @@ pub async fn stop_recording_for_capture(
         let format = capture.format.lock().unwrap();
         format.clone()
     };
-    
-    // Log audio capture details
-    let audio_seconds = if format.sample_rate > 0 && format.channels > 0 {
-        audio_data.len() as f32 / format.sample_rate as f32 / format.channels as f32
-    } else {
-        0.0
-    };
-    
-    if let Some(ref logger) = logger {
-        logger.log_audio_capture(
-            audio_data.len(),
-            audio_seconds,
-            format.sample_rate,
-            format.channels
-        );
-    }
-    
     let target_model = crate::models::active_model_value();
     let mut adapter_guard = capture.stt_adapter.lock().await;
     let mut loaded_model_guard = capture.loaded_model.lock().await;
     if adapter_guard.is_none() || loaded_model_guard.as_deref() != Some(target_model.as_str()) {
-        let mut adapter = create_adapter().map_err(|e| e.to_string())?;
+        if verbose_logs_enabled() {
+            println!("[stt] initializing adapter for model: {}", target_model);
+        }
+        let mut adapter = create_adapter().map_err(|e| {
+            let err_msg = format!("Failed to create adapter: {}", e);
+            eprintln!("{}", err_msg);
+            err_msg
+        })?;
         adapter
             .initialize(SttConfig {
                 model_name: target_model.clone(),
                 ..Default::default()
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let err_msg = format!("Failed to initialize adapter: {}", e);
+                eprintln!("{}", err_msg);
+                // Clean up on initialization failure
+                *adapter_guard = None;
+                *loaded_model_guard = None;
+                err_msg
+            })?;
         *adapter_guard = Some(adapter);
         *loaded_model_guard = Some(target_model.clone());
-        
-        if let Some(ref logger) = logger {
-            logger.log_model_load(&target_model);
+        if verbose_logs_enabled() {
+            println!("[stt] adapter initialized successfully for model: {}", target_model);
         }
+    } else if verbose_logs_enabled() {
+        println!("[stt] reusing existing adapter for model: {}", target_model);
     }
     let adapter = adapter_guard
         .as_ref()
@@ -766,96 +882,91 @@ pub async fn stop_recording_for_capture(
         .to_string();
     let (audio_data, format) = match normalize_audio_for_stt_with_ffmpeg(&audio_data, &format) {
         Ok((samples, normalized_format)) => {
-            log_info(&format!(
-                "Audio normalized via ffmpeg: {} samples, {}Hz, {} channels",
-                samples.len(),
-                normalized_format.sample_rate,
-                normalized_format.channels
-            ));
+            if verbose_logs_enabled() {
+                println!(
+                    "[stt] ffmpeg normalization applied samples={} sample_rate={} channels={}",
+                    samples.len(),
+                    normalized_format.sample_rate,
+                    normalized_format.channels
+                );
+            }
             (samples, normalized_format)
         }
         Err(err) => {
-            log_info(&format!("Using raw audio capture (ffmpeg unavailable): {}", err));
+            if verbose_logs_enabled() {
+                eprintln!("[stt] ffmpeg normalization unavailable, using raw capture: {}", err);
+            }
             (audio_data, format)
         }
     };
-    
-    if let Some(ref logger) = logger {
-        logger.log_transcription_start(&model_name);
+    let audio_seconds = if format.sample_rate > 0 && format.channels > 0 {
+        audio_data.len() as f32 / format.sample_rate as f32 / format.channels as f32
+    } else {
+        0.0
+    };
+    if verbose_logs_enabled() {
+        println!(
+            "[stt] transcription started model={} samples={} duration_s={:.2} sample_rate={} channels={}",
+            model_name,
+            audio_data.len(),
+            audio_seconds,
+            format.sample_rate,
+            format.channels
+        );
     }
 
     match adapter.transcribe(&audio_data, format).await {
         Ok(result) => {
-            if let Some(ref logger) = logger {
-                logger.log_transcription_success(
-                    &result.text,
-                    result.language.as_deref(),
-                    result.confidence
-                );
-            }
+            let language = result
+                .language
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            println!(
+                "[stt] transcription complete model={} language={} chars={}",
+                model_name,
+                language,
+                result.text.chars().count()
+            );
+            println!("[stt] transcript: {}", result.text);
 
-            // Get paste target info for logging
-            let paste_target = get_paste_target_description();
+            // Paste synchronously BEFORE emitting events to ensure it completes
+            if verbose_logs_enabled() {
+                println!("[paste] attempting to paste {} chars to active window", result.text.chars().count());
+            }
             
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
-                if let Some(ref logger) = logger {
-                    logger.log_paste_error(&err);
-                }
-                log_error(&format!("Paste failed: {}", err));
-                emit_transcription_status(&app, "error", Some(err.clone()));
-                
-                // Hide window on error after a delay
-                let app_clone = app.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_secs(2));
-                    if let Some(window) = app_clone.get_window("main") {
-                        let _ = window.hide();
-                    }
-                });
-                
-                return Err(err);
+                eprintln!("[paste] ERROR failed to paste text: {}", err);
+            } else if verbose_logs_enabled() {
+                println!("[paste] paste completed successfully");
             }
             
-            if let Some(ref logger) = logger {
-                logger.log_paste_success(&paste_target);
-                logger.log_session_complete();
-            }
-
+            // Now emit result to UI
             let _ = app.emit_all(
                 "transcription-result",
                 TranscriptionResultEvent {
-                    text: result.text,
-                    language: result.language,
+                    text: result.text.clone(),
+                    language: result.language.clone(),
                     confidence: result.confidence,
                     is_final: true,
                 },
             );
+            
+            // Set idle status
             emit_transcription_status(&app, "idle", None);
             
-            // Hide the main window after transcription
-            if let Some(window) = app.get_window("main") {
-                let _ = window.hide();
+            if verbose_logs_enabled() {
+                println!("[stt] transcription cycle complete, ready for next run");
             }
             
             Ok(())
         }
         Err(err) => {
             let message = err.to_string();
-            if let Some(ref logger) = logger {
-                logger.log_transcription_error(&message);
-            }
-            log_error(&format!("Transcription failed: {}", message));
+            eprintln!("[stt] transcription failed: {}", message);
             emit_transcription_status(&app, "error", Some(message.clone()));
-            
-            // Hide window on error after a delay
-            let app_clone = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_secs(2));
-                if let Some(window) = app_clone.get_window("main") {
-                    let _ = window.hide();
-                }
-            });
-            
+            // Recover into idle so the next dictation cycle can proceed.
+            emit_transcription_status(&app, "idle", None);
+            println!("[stt] error recovery complete, adapter still loaded for next run");
             Err(message)
         }
     }

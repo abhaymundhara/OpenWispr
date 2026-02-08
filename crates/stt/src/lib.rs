@@ -3,9 +3,57 @@
 
 use async_trait::async_trait;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock, RwLock};
 use thiserror::Error;
 
 pub mod adapters;
+
+pub const SHERPA_PARAKEET_INT8_MODEL: &str = "sherpa-onnx/parakeet-tdt-0.6b-v2-int8";
+pub const MLX_PARAKEET_V2_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v2";
+
+pub fn is_sherpa_model_name(model_name: &str) -> bool {
+    model_name == SHERPA_PARAKEET_INT8_MODEL
+}
+
+pub fn is_mlx_model_name(model_name: &str) -> bool {
+    model_name == MLX_PARAKEET_V2_MODEL
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelDownloadProgress {
+    pub model_name: String,
+    pub stage: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub percent: Option<f32>,
+    pub done: bool,
+    pub error: Option<String>,
+    pub message: Option<String>,
+}
+
+pub type ModelDownloadProgressHandler =
+    Arc<dyn Fn(ModelDownloadProgress) + Send + Sync + 'static>;
+
+fn progress_handler_slot() -> &'static RwLock<Option<ModelDownloadProgressHandler>> {
+    static SLOT: OnceLock<RwLock<Option<ModelDownloadProgressHandler>>> = OnceLock::new();
+    SLOT.get_or_init(|| RwLock::new(None))
+}
+
+pub fn set_model_download_progress_handler(handler: Option<ModelDownloadProgressHandler>) {
+    if let Ok(mut slot) = progress_handler_slot().write() {
+        *slot = handler;
+    }
+}
+
+pub fn emit_model_download_progress(progress: ModelDownloadProgress) {
+    let callback = progress_handler_slot()
+        .read()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(Arc::clone));
+    if let Some(callback) = callback {
+        callback(progress);
+    }
+}
 
 /// STT-specific errors
 #[derive(Debug, Error)]
