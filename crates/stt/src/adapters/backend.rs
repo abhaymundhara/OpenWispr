@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use whisper_rs::{
-    get_lang_str, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
+    get_lang_str, install_logging_hooks, FullParams, SamplingStrategy, WhisperContext,
+    WhisperContextParameters,
 };
 
 pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -26,6 +27,14 @@ pub(crate) struct SharedWhisperAdapter {
     state: Arc<RwLock<SharedState>>,
 }
 
+fn verbose_logs_enabled() -> bool {
+    std::env::var("OPENWISPR_VERBOSE_LOGS")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
 impl SharedWhisperAdapter {
     pub(crate) fn new(runtime_name: &'static str) -> Self {
         Self {
@@ -35,6 +44,10 @@ impl SharedWhisperAdapter {
     }
 
     pub(crate) async fn initialize(&self, config: SttConfig) -> Result<()> {
+        // Route whisper.cpp / ggml logs through whisper-rs hooks. Without a logging backend
+        // enabled, this effectively silences native library spam in terminal output.
+        install_logging_hooks();
+
         let runtime_name = self.runtime_name;
         let model_path = tokio::task::spawn_blocking({
             let config = config.clone();
@@ -128,22 +141,24 @@ impl SharedWhisperAdapter {
             ));
         }
 
-        let raw_stats = signal_stats(audio_data);
-        let prepared_stats = signal_stats(&prepared_audio);
-        println!(
-            "[stt] signal raw: samples={} peak={:.5} rms={:.5} zcr={:.5}",
-            audio_data.len(),
-            raw_stats.peak,
-            raw_stats.rms,
-            raw_stats.zero_crossing_rate
-        );
-        println!(
-            "[stt] signal prepared: samples={} peak={:.5} rms={:.5} zcr={:.5}",
-            prepared_audio.len(),
-            prepared_stats.peak,
-            prepared_stats.rms,
-            prepared_stats.zero_crossing_rate
-        );
+        if verbose_logs_enabled() {
+            let raw_stats = signal_stats(audio_data);
+            let prepared_stats = signal_stats(&prepared_audio);
+            println!(
+                "[stt] signal raw: samples={} peak={:.5} rms={:.5} zcr={:.5}",
+                audio_data.len(),
+                raw_stats.peak,
+                raw_stats.rms,
+                raw_stats.zero_crossing_rate
+            );
+            println!(
+                "[stt] signal prepared: samples={} peak={:.5} rms={:.5} zcr={:.5}",
+                prepared_audio.len(),
+                prepared_stats.peak,
+                prepared_stats.rms,
+                prepared_stats.zero_crossing_rate
+            );
+        }
         debug!(
             "{} transcription started (raw_samples={}, prepared_samples={})",
             self.runtime_name,
@@ -248,7 +263,9 @@ fn run_whisper_transcription(
     }
 
     if requested_language.is_none() {
-        println!("[stt] primary decode empty, retrying with auto language detection");
+        if verbose_logs_enabled() {
+            println!("[stt] primary decode empty, retrying with auto language detection");
+        }
         let auto_attempt = decode_once(
             &context,
             &audio_data,
@@ -256,17 +273,21 @@ fn run_whisper_transcription(
             &task,
             DecodeProfile::Primary,
         )?;
-        println!(
-            "[stt] auto-language decode chars={} segments={}",
-            auto_attempt.text.chars().count(),
-            auto_attempt.segments.len()
-        );
+        if verbose_logs_enabled() {
+            println!(
+                "[stt] auto-language decode chars={} segments={}",
+                auto_attempt.text.chars().count(),
+                auto_attempt.segments.len()
+            );
+        }
         if !auto_attempt.text.trim().is_empty() || !auto_attempt.segments.is_empty() {
             return Ok(auto_attempt);
         }
     }
 
-    println!("[stt] primary decode empty, retrying with permissive fallback");
+    if verbose_logs_enabled() {
+        println!("[stt] primary decode empty, retrying with permissive fallback");
+    }
     let permissive_attempt = decode_once(
         &context,
         &audio_data,
@@ -274,11 +295,13 @@ fn run_whisper_transcription(
         &task,
         DecodeProfile::PermissiveFallback,
     )?;
-    println!(
-        "[stt] permissive decode chars={} segments={}",
-        permissive_attempt.text.chars().count(),
-        permissive_attempt.segments.len()
-    );
+    if verbose_logs_enabled() {
+        println!(
+            "[stt] permissive decode chars={} segments={}",
+            permissive_attempt.text.chars().count(),
+            permissive_attempt.segments.len()
+        );
+    }
 
     if permissive_attempt.text.trim().is_empty() && permissive_attempt.segments.is_empty() {
         warn!("whisper returned empty transcription result after all decode attempts");
