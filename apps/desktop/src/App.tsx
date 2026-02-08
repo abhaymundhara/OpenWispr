@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import React, { useState, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import DictationPillApp from "./components/DictationPillApp";
+import { appWindow } from "@tauri-apps/api/window";
 import { AnimatePresence, motion } from "framer-motion";
 import { theme, themeComponents } from "./theme";
 
@@ -10,13 +9,18 @@ import { theme, themeComponents } from "./theme";
 
 interface ModelInfo {
   name: string;
-  runtime: string;
+  size: number;
   downloaded: boolean;
-  can_download: boolean;
+  notes?: string;
+  distro?: string;
+  runtime?: string;
+  sha256?: string;
+  url?: string;
+  can_download?: boolean;
   note?: string;
-};
+}
 
-type ModelDownloadProgressEvent = {
+interface ModelDownloadProgressEvent {
   model: string;
   stage: string;
   downloaded_bytes: number;
@@ -25,26 +29,464 @@ type ModelDownloadProgressEvent = {
   done: boolean;
   error?: string;
   message?: string;
+}
+
+type TranscriptionStatus = "idle" | "listening" | "processing" | "error";
+
+type TranscriptionStatusEvent = {
+  status: TranscriptionStatus;
+  error?: string;
 };
 
 const MODEL_SIZE_HINTS: Record<string, string> = {
-  tiny: "~75 MB",
-  "tiny.en": "~75 MB",
-  base: "~140 MB",
-  "base.en": "~140 MB",
-  small: "~460 MB",
-  "small.en": "~460 MB",
-  medium: "~1.5 GB",
-  "medium.en": "~1.5 GB",
-  "large-v3-turbo": "~1.6 GB",
-  "large-v3": "~3.1 GB",
-  "sherpa-onnx/parakeet-tdt-0.6b-v2-int8": "~1.0 GB",
-  "mlx-community/parakeet-tdt-0.6b-v2": "~1.2 GB",
+  "distil-whisper-small.en": "~400 MB",
+  "distil-whisper-medium.en": "~800 MB",
+  "distil-whisper-large-v3": "~1.5 GB",
+  "sherpa-onnx-whisper-tiny.en": "~75 MB",
+  "sherpa-onnx-whisper-base.en": "~145 MB",
+  "sherpa-onnx-whisper-small.en": "~480 MB",
 };
 
-const windowLabel =
-  (window as { __TAURI_METADATA__?: { __currentWindow?: { label?: string } } })
-    .__TAURI_METADATA__?.__currentWindow?.label ?? "main";
+// --- Components ---
+
+const CleanButton = ({
+  onClick,
+  disabled,
+  className,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    className={`${theme.button.primary} px-4 py-2 rounded-xl text-sm ${className || ""} ${disabled ? "opacity-50 cursor-not-allowed pointer-events-none" : ""}`}
+  >
+    {children}
+  </button>
+);
+
+function Dashboard() {
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>();
+  const [activeDownload, setActiveDownload] = useState<string>();
+  const [downloadProgress, setDownloadProgress] = useState<
+    Record<string, ModelDownloadProgressEvent>
+  >({});
+  const [activeModel, setActiveModel] = useState<string>();
+  const [currentView, setCurrentView] = useState<"dashboard" | "library" | "settings">("dashboard");
+  const [tab, setTab] = useState<"downloaded" | "library">("downloaded"); // For compatibility
+
+  // Sync currentView and tab
+  useEffect(() => {
+    if (currentView === "dashboard") setTab("downloaded");
+    if (currentView === "library") setTab("library");
+  }, [currentView]);
+
+  const loadModels = async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      const [data, selected] = await Promise.all([
+        invoke<ModelInfo[]>("list_models"),
+        invoke<string>("get_active_model"),
+      ]);
+      setModels(data);
+      setActiveModel(selected);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadModels();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen<ModelDownloadProgressEvent>(
+        "model-download-progress",
+        (event) => {
+          const progress = event.payload;
+          setDownloadProgress((prev) => ({
+            ...prev,
+            [progress.model]: progress,
+          }));
+          if (progress.error) {
+            setError(progress.error);
+          }
+        },
+      );
+    };
+
+    void setup();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const onDownload = async (model: string) => {
+    setActiveDownload(model);
+    setError(undefined);
+    setDownloadProgress((prev) => ({
+      ...prev,
+      [model]: {
+        model,
+        stage: "queued",
+        downloaded_bytes: 0,
+        total_bytes: undefined,
+        percent: 0,
+        done: false,
+        error: undefined,
+        message: "Queued",
+      },
+    }));
+    try {
+      await invoke("download_model", { model });
+      await loadModels();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActiveDownload(undefined);
+    }
+  };
+
+  const onSelectModel = async (model: string) => {
+    setError(undefined);
+    try {
+      await invoke("set_active_model", { model });
+      setActiveModel(model);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const downloadedModels = models.filter((m) => m.downloaded);
+  const activeModelInfo = models.find((m) => m.name === activeModel);
+  const libraryModels = models.filter((m) => !m.downloaded && m.can_download);
+
+  // --- Layout Helper Components ---
+
+  const NavItem = ({
+    active,
+    onClick,
+    icon,
+    label,
+  }: {
+    active: boolean;
+    onClick: () => void;
+    icon: React.ReactNode;
+    label: string;
+  }) => (
+    <button
+      onClick={onClick}
+      className={`group w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-300 text-left ${
+        active
+          ? "text-white bg-white/10 backdrop-blur-xl shadow-lg border border-white/20"
+          : "text-white/60 hover:text-white hover:bg-white/5 hover:backdrop-blur-lg hover:border hover:border-white/10 border border-transparent"
+      }`}
+    >
+      <span className={`transition-transform duration-200 group-hover:scale-110 ${active ? "text-white" : "text-white/70"}`}>
+        {icon}
+      </span>
+      <span className="text-sm font-medium">{label}</span>
+    </button>
+  );
+
+  return (
+    <div className={`h-screen ${themeComponents.container} flex overflow-hidden font-sans text-white`} style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+      {/* Enhanced Dark Glass Sidebar */}
+      <aside className={`w-72 relative flex flex-col border-r border-white/5`} style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {/* Sophisticated dark glass background with gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-b from-gray-900/90 via-black/80 to-gray-950/95 backdrop-blur-2xl"></div>
+        
+        {/* Subtle inner shadow for depth */}
+        <div className="absolute inset-0 shadow-[inset_-1px_0_0_rgba(255,255,255,0.05)]"></div>
+
+        <div className="relative z-10 flex flex-col h-full">
+          {/* Logo Section */}
+          <div className="px-6 pt-10 pb-8">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-white/20 to-white/5 rounded-xl flex items-center justify-center backdrop-blur-md border border-white/20 shadow-xl shadow-black/20">
+                <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+              </div>
+              <div className="flex flex-col">
+                <span className={`text-white font-semibold text-lg drop-shadow-sm ${theme.typography.heading}`}>OpenWispr</span>
+                <span className="text-white/40 text-xs font-medium tracking-wide">AI Assistant</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 px-4 space-y-2 overflow-y-auto scrollbar-hide">
+            <div className="px-2 mb-2 text-xs font-semibold text-white/30 uppercase tracking-wider">Menu</div>
+            <NavItem
+              active={currentView === "dashboard"}
+              onClick={() => setCurrentView("dashboard")}
+              label="Dashboard"
+              icon={<span className="material-icons-outlined text-[20px]">dashboard</span>}
+            />
+            <NavItem
+              active={currentView === "library"}
+              onClick={() => setCurrentView("library")}
+              label="Model Library"
+              icon={<span className="material-icons-outlined text-[20px]">library_books</span>}
+            />
+            {/* Spacer */}
+            <div className="h-4"></div>
+            <div className="px-2 mb-2 text-xs font-semibold text-white/30 uppercase tracking-wider">Settings</div>
+            <NavItem
+              active={currentView === "settings"}
+              onClick={() => setCurrentView("settings")}
+              label="Settings"
+              icon={<span className="material-icons-outlined text-[20px]">settings</span>}
+            />
+          </nav>
+
+          {/* Pro/Status Card */}
+          <div className="p-4 mt-auto">
+            <div className={`${theme.glass.secondary} rounded-xl p-4 border border-white/10`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-white/50">Active Engine</span>
+                <span className="flex h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+              </div>
+              <div className="text-sm font-medium text-white/90 truncate">{activeModelInfo?.name || "No Model Active"}</div>
+              {activeModelInfo && (
+                <div className="mt-2 text-[10px] text-white/40 font-mono bg-black/20 rounded px-2 py-1 inline-block">
+                  {activeModelInfo.runtime}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 relative overflow-hidden bg-transparent" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {/* Background Gradients */}
+        <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen"></div>
+        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-[100px] pointer-events-none mix-blend-screen"></div>
+
+        <div className="absolute inset-0 overflow-y-auto px-8 py-10">
+           {/* Header */}
+           <div className="mb-10">
+            <h1 className={`${theme.typography.displayLarge} text-4xl mb-2 text-white`}>
+              {currentView === "dashboard" && "Dashboard"}
+              {currentView === "library" && "Model Library"}
+              {currentView === "settings" && "Settings"}
+            </h1>
+            <p className={`${theme.text.secondary} text-lg font-light`}>
+              {currentView === "dashboard" && "Manage your active AI models and performance."}
+              {currentView === "library" && "Discover and install new speech recognition models."}
+              {currentView === "settings" && "Configure application preferences."}
+            </p>
+          </div>
+
+          <div className="space-y-6 max-w-5xl">
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-200 text-sm flex items-center gap-3 backdrop-blur-md"
+              >
+                <span className="material-icons-outlined">error_outline</span>
+                {error}
+              </motion.div>
+            )}
+
+            {currentView === "dashboard" && (
+              <>
+                 {/* Quick Stats Grid */}
+                 <div className="grid grid-cols-3 gap-6 mb-8">
+                  <div className={`${theme.glass.primary} p-6 rounded-2xl`}>
+                    <div className="text-white/50 text-sm font-medium mb-1">Total Models</div>
+                    <div className="text-3xl font-bold text-white tracking-tight">{downloadedModels.length}</div>
+                  </div>
+                  <div className={`${theme.glass.primary} p-6 rounded-2xl`}>
+                    <div className="text-white/50 text-sm font-medium mb-1">Active Runtime</div>
+                    <div className="text-3xl font-bold text-white tracking-tight">{activeModelInfo?.runtime || "-"}</div>
+                  </div>
+                  <div className={`${theme.glass.primary} p-6 rounded-2xl`}>
+                    <div className="text-white/50 text-sm font-medium mb-1">System Status</div>
+                    <div className="text-3xl font-bold text-white tracking-tight flex items-center gap-2">
+                      Ready <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <h2 className={`${theme.typography.heading} text-xl text-white mb-4`}>Installed Models</h2>
+                {downloadedModels.length === 0 ? (
+                  <div className={`${theme.glass.secondary} rounded-2xl p-12 text-center border-dashed border border-white/10`}>
+                     <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <span className="material-icons-outlined text-white/20 text-3xl">download</span>
+                     </div>
+                     <h3 className="text-white font-medium mb-2">No models installed</h3>
+                     <p className="text-white/40 text-sm mb-6">Download a model from the library to get started.</p>
+                     <button 
+                       onClick={() => setCurrentView("library")}
+                       className={`${theme.button.primary} px-6 py-2.5 rounded-xl`}
+                     >
+                       Go to Library
+                     </button>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    {downloadedModels.map((model) => (
+                      <ModelCardGeneric
+                        key={model.name}
+                        model={model}
+                        isActive={activeModel === model.name}
+                        onAction={() => onSelectModel(model.name)}
+                        actionLabel={activeModel === model.name ? "Active" : "Activate"}
+                        actionDisabled={activeModel === model.name}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {currentView === "library" && (
+              <>
+                <div className="grid gap-4">
+                  {libraryModels.map((model) => (
+                    <ModelCardGeneric
+                      key={model.name}
+                      model={model}
+                      isDownloading={activeDownload === model.name}
+                      downloadProgress={downloadProgress[model.name]}
+                      onAction={() => onDownload(model.name)}
+                      actionLabel={activeDownload === model.name ? "Downloading" : "Download"}
+                      actionDisabled={!!activeDownload}
+                    />
+                  ))}
+                  {libraryModels.length === 0 && (
+                    <div className="text-center py-20 text-white/40">All available models are installed.</div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {currentView === "settings" && (
+              <div className={`${theme.glass.primary} p-8 rounded-2xl`}>
+                <h3 className="text-lg font-medium text-white mb-4">Application Settings</h3>
+                <p className="text-white/50 text-sm">Settings configuration is coming soon.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function ModelCardGeneric({
+  model,
+  isActive,
+  isDownloading,
+  downloadProgress,
+  onAction,
+  actionLabel,
+  actionDisabled,
+}: {
+  model: ModelInfo;
+  isActive?: boolean;
+  isDownloading?: boolean;
+  downloadProgress?: ModelDownloadProgressEvent;
+  onAction: () => void;
+  actionLabel: React.ReactNode;
+  actionDisabled?: boolean;
+}) {
+  const percent =
+    typeof downloadProgress?.percent === "number"
+      ? Math.max(0, Math.min(100, downloadProgress.percent))
+      : 0;
+
+  return (
+    <div className={`group relative overflow-hidden rounded-2xl border transition-all duration-300 ${
+        isActive 
+          ? "bg-gradient-to-r from-indigo-500/10 to-indigo-500/5 border-indigo-500/20 shadow-lg shadow-indigo-900/10" 
+          : `${theme.glass.primary}`
+      }`}>
+        
+       {/* Active Glow/Indicator */}
+       {isActive && (
+          <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.6)]"></div>
+       )}
+
+      <div className="relative z-10 flex items-center justify-between p-6">
+        <div className="flex-1 min-w-0 pr-8">
+           <div className="flex items-center gap-3 mb-1">
+             <h3 className={`text-lg font-semibold tracking-tight ${isActive ? "text-white" : "text-white/90"}`}>
+               {model.name}
+             </h3>
+             {isActive && (
+               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-200 border border-indigo-500/20 uppercase tracking-widest">
+                 Active
+               </span>
+             )}
+             {model.distro && (
+               <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-white/5 text-white/40 border border-white/5 uppercase tracking-wider">
+                 {model.distro}
+               </span>
+             )}
+           </div>
+           
+           <div className="flex items-center gap-4 text-xs text-white/40 mt-2 font-medium">
+             <div className="flex items-center gap-1.5 bg-white/5 px-2 py-1 rounded-md">
+                <span className="material-icons-outlined text-[14px]">sd_storage</span>
+                {MODEL_SIZE_HINTS[model.name] || "Unknown size"}
+             </div>
+             <div className="flex items-center gap-1.5 bg-white/5 px-2 py-1 rounded-md">
+                <span className="material-icons-outlined text-[14px]">speed</span>
+                {model.runtime}
+             </div>
+             {model.note && (
+               <span className="truncate max-w-[200px] border-l border-white/10 pl-3">{model.note}</span>
+             )}
+           </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <CleanButton
+            onClick={onAction}
+            disabled={actionDisabled}
+            className={`min-w-[100px] ${isActive ? "bg-white/5 border border-white/10 text-white/50" : isDownloading ? "bg-indigo-600/20 text-indigo-200 border border-indigo-500/30" : ""}`}
+          >
+            {isDownloading ? (
+               <div className="flex items-center justify-center gap-2">
+                 <div className="w-3 h-3 border-2 border-indigo-200 border-t-transparent rounded-full animate-spin"></div>
+                 <span>{Math.round(percent)}%</span>
+               </div>
+            ) : actionLabel}
+          </CleanButton>
+        </div>
+      </div>
+
+       {/* Loading Progress Bar */}
+       {isDownloading && (
+        <div className="absolute bottom-0 left-0 w-full h-[2px] bg-white/5">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${percent}%` }}
+            className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 shadow-[0_0_8px_rgba(99,102,241,0.8)]"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Dictation Pill Components ---
 
 const useFeedbackSounds = (enabled: boolean) => {
   const ctxRef = useRef<AudioContext | null>(null);
@@ -235,414 +677,6 @@ const FloatingPill = ({
   );
 };
 
-const CleanButton = ({
-  onClick,
-  disabled,
-  className,
-  children,
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-  className?: string;
-  children: React.ReactNode;
-}) => (
-  <button
-    onClick={onClick}
-    disabled={disabled}
-    className={`inline-flex h-9 items-center justify-center rounded-xl px-4 text-[13px] font-medium transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-white/20 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-30 ${
-      className || ""
-    }`}
-  >
-    {children}
-  </button>
-);
-
-function ModelManager() {
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>();
-  const [activeDownload, setActiveDownload] = useState<string>();
-  const [downloadProgress, setDownloadProgress] = useState<
-    Record<string, ModelDownloadProgressEvent>
-  >({});
-  const [activeModel, setActiveModel] = useState<string>();
-  const [tab, setTab] = useState<"downloaded" | "library">("downloaded");
-
-  const loadModels = async () => {
-    setLoading(true);
-    setError(undefined);
-    try {
-      const [data, selected] = await Promise.all([
-        invoke<ModelInfo[]>("list_models"),
-        invoke<string>("get_active_model"),
-      ]);
-      setModels(data);
-      setActiveModel(selected);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadModels();
-  }, []);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    const setup = async () => {
-      unlisten = await listen<ModelDownloadProgressEvent>(
-        "model-download-progress",
-        (event) => {
-          const progress = event.payload;
-          setDownloadProgress((prev) => ({
-            ...prev,
-            [progress.model]: progress,
-          }));
-          if (progress.error) {
-            setError(progress.error);
-          }
-        },
-      );
-    };
-
-    void setup();
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  const onDownload = async (model: string) => {
-    setActiveDownload(model);
-    setError(undefined);
-    setDownloadProgress((prev) => ({
-      ...prev,
-      [model]: {
-        model,
-        stage: "queued",
-        downloaded_bytes: 0,
-        total_bytes: undefined,
-        percent: 0,
-        done: false,
-        error: undefined,
-        message: "Queued",
-      },
-    }));
-    try {
-      await invoke("download_model", { model });
-      await loadModels();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActiveDownload(undefined);
-    }
-  };
-
-  const onSelectModel = async (model: string) => {
-    setError(undefined);
-    try {
-      await invoke("set_active_model", { model });
-      setActiveModel(model);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const downloadedModels = models.filter((m) => m.downloaded);
-  const activeModelInfo = models.find((m) => m.name === activeModel);
-  const libraryModels = models.filter((m) => !m.downloaded && m.can_download);
-
-  const NavItem = ({
-    active,
-    onClick,
-    icon,
-    label,
-    badge,
-  }: {
-    active: boolean;
-    onClick: () => void;
-    icon: React.ReactNode;
-    label: string;
-    badge?: number;
-  }) => (
-    <button
-      onClick={onClick}
-      className={`group w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-300 ${
-        active
-          ? "text-white bg-white/10 backdrop-blur-xl shadow-lg border border-white/20"
-          : "text-white/60 hover:text-white hover:bg-white/5"
-      }`}
-    >
-      <div className="flex items-center space-x-3">
-        <span className={`transition-transform duration-300 group-hover:scale-110 ${active ? 'text-white' : 'text-white/40 group-hover:text-white/70'}`}>
-          {icon}
-        </span>
-        <span className="text-[14px] font-medium">{label}</span>
-      </div>
-      {typeof badge === 'number' && badge > 0 && (
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-white/20 text-white' : 'bg-white/5 text-white/40 group-hover:text-white/60'}`}>
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-
-  return (
-    <div className="flex h-screen w-screen bg-gradient-to-br from-gray-900 via-gray-950 to-black text-white selection:bg-white/20 overflow-hidden font-sans">
-      {/* Liquid Glass Sidebar */}
-      <aside className="w-64 relative flex flex-col border-r border-white/5">
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-2xl"></div>
-        
-        <div className="relative z-10 flex flex-col h-full pt-10 pb-6 px-6">
-          {/* Logo Section */}
-          <div className="flex items-center space-x-3 mb-10 px-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-white/20 to-white/5 rounded-xl flex items-center justify-center backdrop-blur-md border border-white/20 shadow-xl shadow-black/20">
-              <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="none" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[16px] font-bold tracking-tight">OpenWispr</span>
-              <span className="text-[11px] text-white/40 font-medium tracking-wide">Desktop Alpha</span>
-            </div>
-          </div>
-
-          {/* Navigation */}
-          <nav className="flex-1 space-y-2">
-            <NavItem
-              active={tab === "downloaded"}
-              onClick={() => setTab("downloaded")}
-              label="Installed"
-              badge={downloadedModels.length}
-              icon={
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              }
-            />
-            <NavItem
-              active={tab === "library"}
-              onClick={() => setTab("library")}
-              label="Library"
-              badge={libraryModels.length}
-              icon={
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-              }
-            />
-          </nav>
-
-          {/* Footer Info */}
-          <div className="mt-auto pt-6 border-t border-white/5">
-            <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] text-white/40 font-medium">Active Model</span>
-                <span className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-              </div>
-              <p className="text-[13px] font-medium text-white/80 truncate">
-                {activeModelInfo?.name || "None"}
-              </p>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto scrollbar-hide relative">
-        {/* Subtle Radial Gradient Glows */}
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none"></div>
-        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-blue-500/5 rounded-full blur-[100px] pointer-events-none"></div>
-
-        <div className="relative z-10 max-w-4xl mx-auto px-10 py-12">
-          {/* Header */}
-          <header className="mb-12">
-            <h2 className="text-[32px] font-bold tracking-tight mb-2 text-white">
-              {tab === "downloaded" ? "Your Voice Models" : "Model Library"}
-            </h2>
-            <p className="text-[15px] text-white/50 font-medium">
-              {tab === "downloaded" 
-                ? "Manage and switch between your installed speech recognition engines."
-                : "Browse and download high-quality local models for offline use."}
-            </p>
-          </header>
-
-          {/* Error Banner */}
-          <AnimatePresence>
-            {error && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="mb-8 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start space-x-3 backdrop-blur-md"
-              >
-                <svg className="w-5 h-5 text-red-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <p className="text-[14px] text-red-200/80 font-medium leading-relaxed">{error}</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Model List */}
-          <div className="space-y-4">
-            {loading && models.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-40">
-                <div className="w-8 h-8 border-2 border-white/10 border-t-white/60 rounded-full animate-spin mb-4"></div>
-                <span className="text-white/40 text-[14px] font-medium tracking-wide">Fetching models...</span>
-              </div>
-            ) : tab === "downloaded" ? (
-              downloadedModels.length === 0 ? (
-                <div className="py-32 flex flex-col items-center border border-dashed border-white/10 rounded-3xl bg-white/[0.02]">
-                  <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6">
-                    <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                    </svg>
-                  </div>
-                  <h3 className="text-white/60 text-[16px] font-semibold mb-2">No models installed</h3>
-                  <button
-                    onClick={() => setTab("library")}
-                    className="text-indigo-400 hover:text-indigo-300 font-semibold text-[14px] transition-colors"
-                  >
-                    Explore the Library &rarr;
-                  </button>
-                </div>
-              ) : (
-                downloadedModels.map((model) => (
-                  <ModelCardRefined
-                    key={model.name}
-                    model={model}
-                    isActive={activeModel === model.name}
-                    onAction={() => onSelectModel(model.name)}
-                    actionLabel={activeModel === model.name ? "Active" : "Activate"}
-                    actionDisabled={activeModel === model.name}
-                  />
-                ))
-              )
-            ) : libraryModels.length === 0 ? (
-              <div className="py-32 text-center text-white/30 font-medium">All available models have been installed.</div>
-            ) : (
-              libraryModels.map((model) => (
-                <ModelCardRefined
-                  key={model.name}
-                  model={model}
-                  isDownloading={activeDownload === model.name}
-                  downloadProgress={downloadProgress[model.name]}
-                  onAction={() => onDownload(model.name)}
-                  actionLabel={activeDownload === model.name ? "Downloading" : "Download"}
-                  actionDisabled={!!activeDownload}
-                />
-              ))
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function ModelCardRefined({
-  model,
-  isActive,
-  isDownloading,
-  downloadProgress,
-  onAction,
-  actionLabel,
-  actionDisabled,
-}: {
-  model: ModelInfo;
-  isActive?: boolean;
-  isDownloading?: boolean;
-  downloadProgress?: ModelDownloadProgressEvent;
-  onAction: () => void;
-  actionLabel: React.ReactNode;
-  actionDisabled?: boolean;
-}) {
-  const percent =
-    typeof downloadProgress?.percent === "number"
-      ? Math.max(0, Math.min(100, downloadProgress.percent))
-      : 0;
-
-  return (
-    <div
-      className={`group relative overflow-hidden rounded-2xl transition-all duration-300 ${
-        isActive
-          ? "bg-white/10 border-white/20 shadow-2xl shadow-indigo-500/10"
-          : "bg-white/5 border-white/5 hover:bg-white/[0.08] hover:border-white/10"
-      } border`}
-    >
-      <div className="relative z-10 flex items-center justify-between p-6">
-        <div className="min-w-0 flex-1 pr-6">
-          <div className="flex items-center space-x-3 mb-2">
-            <h3 className={`text-[17px] font-bold tracking-tight ${isActive ? "text-white" : "text-white/90"}`}>
-              {model.name}
-            </h3>
-            {isActive && (
-              <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/30">
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></div>
-                <span className="text-[10px] font-bold text-indigo-300 tracking-wider">ACTIVE</span>
-              </div>
-            )}
-            {model.note && (
-              <span className="text-[11px] font-medium text-white/30 truncate max-w-[150px]">{model.note}</span>
-            )}
-          </div>
-          
-          <div className="flex items-center space-x-4 text-[13px] text-white/40 font-medium">
-            <div className="flex items-center space-x-1.5">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7c-2 0-3 1-3 3zM9 11h6m-6 4h3" />
-              </svg>
-              <span>{MODEL_SIZE_HINTS[model.name] || "Search sizes"}</span>
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span>{model.runtime}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="shrink-0">
-          <CleanButton
-            onClick={onAction}
-            disabled={actionDisabled}
-            className={`
-              ${isActive
-                ? "bg-white/10 text-white/60 cursor-default"
-                : isDownloading
-                ? "bg-indigo-500/20 text-indigo-300"
-                : "bg-white/10 text-white hover:bg-white/20 border border-white/5"}
-            `}
-          >
-            {isDownloading ? (
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 border-2 border-indigo-300/30 border-t-indigo-300 rounded-full animate-spin"></div>
-                <span className="font-bold tabular-nums">{Math.round(percent)}%</span>
-              </div>
-            ) : (
-              actionLabel
-            )}
-          </CleanButton>
-        </div>
-      </div>
-
-      {/* Modern Slim Loader Bar */}
-      {isDownloading && (
-        <div className="absolute bottom-0 left-0 w-full h-1 bg-white/5">
-          <motion.div
-            initial={{ width: 0 }}
-            animate={{ width: `${percent}%` }}
-            className="h-full bg-gradient-to-r from-indigo-500 to-blue-400 shadow-[0_0_12px_rgba(99,102,241,0.6)]"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
 function DictationPillApp() {
   const [fnHeld, setFnHeld] = useState(false);
   const [sttStatus, setSttStatus] = useState<TranscriptionStatus>("idle");
@@ -684,11 +718,6 @@ function DictationPillApp() {
             } else if (event.payload.status !== "error") {
               setSttError(undefined);
             }
-
-            // NOTE: Do NOT hide the window here. The main window is transparent
-            // and ignores cursor events, so it's effectively invisible when the
-            // pill is not shown. Hiding it causes macOS to deactivate our
-            // Accessory-policy app, which can terminate the process.
           },
         );
       } catch (e) {
@@ -717,9 +746,6 @@ function DictationPillApp() {
     document.body.style.backgroundColor = "transparent";
     const root = document.getElementById("root");
     if (root) root.style.backgroundColor = "transparent";
-
-    // Also remove any potential shadows or backgrounds from the window itself logic via class manipulation if needed
-    // But mainly targeting root elements.
 
     if (fnHeld && !previousFnHeld.current) {
       playStartSound();
@@ -756,6 +782,8 @@ function DictationPillApp() {
           40% {
             transform: scale(1);
             opacity: 1;
+            transform: scale(1);
+            opacity: 1;
           }
         }
       `}</style>
@@ -778,10 +806,18 @@ function DictationPillApp() {
 }
 
 function App() {
-  if (windowLabel === "models") {
-    return <ModelManager />;
+  const [windowLabel, setWindowLabel] = useState<string>("");
+
+  useEffect(() => {
+    setWindowLabel(appWindow.label);
+  }, []);
+
+  if (windowLabel === "dictation_pill") {
+    return <DictationPillApp />;
   }
-  return <DictationPillApp />;
+
+  // Default to Dashboard layout
+  return <Dashboard />;
 }
 
 export default App;
