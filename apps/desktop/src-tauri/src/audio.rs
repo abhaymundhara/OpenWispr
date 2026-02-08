@@ -859,11 +859,18 @@ pub async fn stop_recording_for_capture(
             );
             println!("[stt] transcript: {}", result.text);
 
+            // Paste synchronously BEFORE emitting events to ensure it completes
             if verbose_logs_enabled() {
                 println!("[paste] attempting to paste {} chars to active window", result.text.chars().count());
             }
             
-            // Emit result FIRST so UI shows the text
+            if let Err(err) = paste_text_preserving_clipboard(&result.text) {
+                eprintln!("[paste] ERROR failed to paste text: {}", err);
+            } else if verbose_logs_enabled() {
+                println!("[paste] paste completed successfully");
+            }
+            
+            // Now emit result to UI
             let _ = app.emit_all(
                 "transcription-result",
                 TranscriptionResultEvent {
@@ -874,24 +881,13 @@ pub async fn stop_recording_for_capture(
                 },
             );
             
-            // CRITICAL: Paste operation must run on a blocking thread to prevent
-            // the async runtime from dropping the task mid-operation
-            let text_to_paste = result.text.clone();
-            std::thread::spawn(move || {
-                if let Err(err) = paste_text_preserving_clipboard(&text_to_paste) {
-                    eprintln!("[paste] ERROR failed to paste text: {}", err);
-                } else if verbose_logs_enabled() {
-                    println!("[paste] paste completed successfully");
-                }
-            });
-
-            // CRITICAL: Set status to idle and let the UI/frontend hide the window
-            // Don't hide from backend to avoid race conditions
+            // Set idle status
             emit_transcription_status(&app, "idle", None);
             
             if verbose_logs_enabled() {
                 println!("[stt] transcription cycle complete, ready for next run");
             }
+            
             Ok(())
         }
         Err(err) => {
