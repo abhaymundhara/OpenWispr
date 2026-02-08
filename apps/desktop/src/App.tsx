@@ -335,6 +335,8 @@ function ModelManager() {
   const downloadableCount = models.filter(
     (m) => !m.downloaded && m.can_download,
   ).length;
+  const buttonBaseClass =
+    "inline-flex h-9 items-center justify-center rounded-full px-4 text-[12px] font-semibold tracking-[0.01em] transition-colors";
 
   const TabButton = ({
     active,
@@ -347,7 +349,7 @@ function ModelManager() {
   }) => (
     <button
       onClick={onClick}
-      className={`relative rounded-full px-5 py-2 text-sm font-medium transition-colors duration-200 ${
+      className={`relative h-9 rounded-full px-5 text-[12px] font-semibold tracking-[0.01em] transition-colors duration-200 ${
         active
           ? "text-white"
           : "text-white/45 hover:bg-white/[0.04] hover:text-white/75"
@@ -384,10 +386,10 @@ function ModelManager() {
       <div className="mx-auto flex h-full w-full max-w-5xl flex-col px-8 pb-6 pt-7 font-sans select-none">
         <div className="mb-7 flex items-start justify-between">
           <div className="space-y-2">
-            <h1 className="text-[40px] font-light leading-none tracking-tight text-white">
+            <h1 className="text-[36px] font-light leading-none tracking-tight text-white">
               Models
             </h1>
-            <p className="text-sm text-white/50">
+            <p className="text-[14px] text-white/50">
               Manage your local speech engines
             </p>
           </div>
@@ -428,7 +430,7 @@ function ModelManager() {
               Library
             </TabButton>
           </div>
-          <div className="hidden text-xs text-white/40 sm:block">
+          <div className="hidden text-[12px] text-white/45 sm:block">
             Active:{" "}
             <span className="font-medium text-white/75">
               {activeModelInfo?.name ?? "None selected"}
@@ -441,7 +443,7 @@ function ModelManager() {
             <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
               Installed
             </p>
-            <p className="mt-1 text-xl font-medium text-white">
+            <p className="mt-1 text-[24px] font-medium leading-none text-white">
               {downloadedModels.length}
             </p>
           </div>
@@ -449,7 +451,7 @@ function ModelManager() {
             <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
               Available To Download
             </p>
-            <p className="mt-1 text-xl font-medium text-white">
+            <p className="mt-1 text-[24px] font-medium leading-none text-white">
               {downloadableCount}
             </p>
           </div>
@@ -457,7 +459,7 @@ function ModelManager() {
             <p className="text-[11px] uppercase tracking-[0.14em] text-white/35">
               Active Engine
             </p>
-            <p className="mt-1 truncate text-sm font-medium text-white/85">
+            <p className="mt-1 truncate text-[13px] font-medium text-white/85">
               {activeModelInfo?.name ?? "Not set"}
             </p>
           </div>
@@ -474,7 +476,7 @@ function ModelManager() {
               <div className="text-xs uppercase tracking-[0.14em] text-red-200/80">
                 Model Error
               </div>
-              <div className="mt-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-sm text-red-100/90">
+              <div className="mt-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-100/90">
                 {error}
               </div>
             </motion.div>
@@ -490,10 +492,10 @@ function ModelManager() {
           ) : tab === "downloaded" ? (
             downloadedModels.length === 0 ? (
               <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] px-6 py-12 text-center">
-                <p className="text-white/70">No models installed yet.</p>
+                <p className="text-[15px] text-white/70">No models installed yet.</p>
                 <button
                   onClick={() => setTab("library")}
-                  className="mt-4 rounded-full border border-white/15 px-4 py-2 text-sm text-white/80 transition-colors hover:bg-white/[0.06]"
+                  className={`${buttonBaseClass} mt-4 border border-white/15 text-white/85 hover:bg-white/[0.06]`}
                 >
                   Browse library
                 </button>
@@ -519,19 +521,19 @@ function ModelManager() {
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0 space-y-2">
                             <div className="flex items-center gap-2">
-                              <p className="truncate text-base font-medium text-white">
+                              <p className="truncate text-[15px] font-medium text-white">
                                 {model.name}
                               </p>
                               <StatusBadge type={model.runtime} />
                             </div>
-                            <div className="text-xs text-white/45">
+                            <div className="text-[12px] text-white/45">
                               Size: {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
                             </div>
                           </div>
                           <button
                             onClick={() => onSelectModel(model.name)}
                             disabled={isSelected}
-                            className={`shrink-0 rounded-full px-4 py-2 text-xs font-medium transition-colors ${
+                            className={`${buttonBaseClass} shrink-0 ${
                               isSelected
                                 ? "cursor-default bg-white/10 text-white/60"
                                 : "border border-white/20 bg-white/5 text-white hover:bg-white/15"
@@ -570,12 +572,12 @@ function ModelManager() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 space-y-2">
                         <div className="flex items-center gap-2">
-                          <p className="truncate text-sm font-medium text-white/90">
+                          <p className="truncate text-[14px] font-medium text-white/90">
                             {model.name}
                           </p>
                           <StatusBadge type={model.runtime} />
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-white/45">
+                        <div className="flex flex-wrap items-center gap-2 text-[12px] text-white/45">
                           <span>
                             Size: {MODEL_SIZE_HINTS[model.name] || "Unknown"}
                           </span>
@@ -608,14 +610,14 @@ function ModelManager() {
 
                       <div className="shrink-0">
                         {isDownloaded ? (
-                          <div className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-300">
+                          <div className={`${buttonBaseClass} border border-emerald-400/25 bg-emerald-400/10 text-emerald-300`}>
                             Installed
                           </div>
                         ) : (
                           <button
                             onClick={() => onDownload(model.name)}
                             disabled={isDownloading || !canDownload}
-                            className={`rounded-full px-4 py-2 text-xs font-medium transition-colors ${
+                            className={`${buttonBaseClass} ${
                               !canDownload
                                 ? "cursor-not-allowed bg-white/5 text-white/25"
                                 : isDownloading
@@ -641,7 +643,7 @@ function ModelManager() {
           )}
         </div>
 
-        <div className="mt-4 border-t border-white/10 pt-3 text-[10px] uppercase tracking-[0.16em] text-white/30">
+        <div className="mt-4 border-t border-white/10 pt-3 text-[10px] uppercase tracking-[0.14em] text-white/30">
           OpenWispr Desktop Alpha
         </div>
       </div>
