@@ -1,6 +1,5 @@
 use crate::{
     is_mlx_model_name, AudioFormat, Result, SttConfig, SttError, TranscriptSegment, Transcription,
-    MLX_PARAKEET_V2_MODEL,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -121,10 +120,6 @@ impl SharedMlxParakeetAdapter {
         marker_file_path(model_name)
             .map(|path| path.exists())
             .unwrap_or(false)
-    }
-
-    pub(crate) fn available_models(&self) -> Vec<String> {
-        vec![MLX_PARAKEET_V2_MODEL.to_string()]
     }
 
 }

@@ -92,10 +92,7 @@ impl SttAdapter for MlxAdapter {
     }
 
     fn available_models(&self) -> Vec<String> {
-        let mut models = self.whisper.available_models();
-        models.extend(self.sherpa.available_models());
-        models.extend(self.mlx_parakeet.available_models());
-        models
+        self.whisper.available_models()
     }
 
     fn current_model(&self) -> Option<String> {

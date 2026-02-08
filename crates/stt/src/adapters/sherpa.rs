@@ -1,6 +1,6 @@
 use crate::{
     is_sherpa_model_name, AudioFormat, Result, SttConfig, SttError, TranscriptSegment,
-    Transcription, SHERPA_PARAKEET_INT8_MODEL,
+    Transcription,
 };
 use bzip2::read::BzDecoder;
 use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
@@ -121,10 +121,6 @@ impl SharedSherpaAdapter {
         sherpa_model_root_dir()
             .map(|root| has_required_files(&root))
             .unwrap_or(false)
-    }
-
-    pub(crate) fn available_models(&self) -> Vec<String> {
-        vec![SHERPA_PARAKEET_INT8_MODEL.to_string()]
     }
 
 }
