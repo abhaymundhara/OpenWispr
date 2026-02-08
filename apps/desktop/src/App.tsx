@@ -1,17 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api";
-import { appWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import DictationPillApp from "./components/DictationPillApp";
+import { AnimatePresence, motion } from "framer-motion";
+import { theme, themeComponents } from "./theme";
 
-type TranscriptionStatus = "idle" | "listening" | "processing" | "error";
+// --- Types ---
 
-type TranscriptionStatusEvent = {
-  status: TranscriptionStatus;
-  error?: string;
-};
-
-type ModelInfo = {
+interface ModelInfo {
   name: string;
   runtime: string;
   downloaded: boolean;
