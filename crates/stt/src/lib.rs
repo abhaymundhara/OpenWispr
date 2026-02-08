@@ -31,7 +31,8 @@ pub struct ModelDownloadProgress {
     pub message: Option<String>,
 }
 
-type ModelDownloadProgressHandler = Arc<dyn Fn(ModelDownloadProgress) + Send + Sync + 'static>;
+pub type ModelDownloadProgressHandler =
+    Arc<dyn Fn(ModelDownloadProgress) + Send + Sync + 'static>;
 
 fn progress_handler_slot() -> &'static RwLock<Option<ModelDownloadProgressHandler>> {
     static SLOT: OnceLock<RwLock<Option<ModelDownloadProgressHandler>>> = OnceLock::new();

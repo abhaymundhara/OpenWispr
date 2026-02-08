@@ -3,7 +3,7 @@ use crate::{
     TranscriptSegment, Transcription, TranscriptionTask,
 };
 use std::fs::File;
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;

@@ -19,6 +19,17 @@ type ModelInfo = {
   note?: string;
 };
 
+type ModelDownloadProgressEvent = {
+  model: string;
+  stage: string;
+  downloaded_bytes: number;
+  total_bytes?: number;
+  percent?: number;
+  done: boolean;
+  error?: string;
+  message?: string;
+};
+
 const MODEL_SIZE_HINTS: Record<string, string> = {
   tiny: "~75 MB",
   "tiny.en": "~75 MB",
@@ -232,6 +243,9 @@ function ModelManager() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [activeDownload, setActiveDownload] = useState<string>();
+  const [downloadProgress, setDownloadProgress] = useState<
+    Record<string, ModelDownloadProgressEvent>
+  >({});
   const [activeModel, setActiveModel] = useState<string>();
   const [tab, setTab] = useState<"downloaded" | "library">("downloaded");
 
@@ -256,9 +270,46 @@ function ModelManager() {
     loadModels();
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen<ModelDownloadProgressEvent>(
+        "model-download-progress",
+        (event) => {
+          const progress = event.payload;
+          setDownloadProgress((prev) => ({
+            ...prev,
+            [progress.model]: progress,
+          }));
+          if (progress.error) {
+            setError(progress.error);
+          }
+        },
+      );
+    };
+
+    void setup();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const onDownload = async (model: string) => {
     setActiveDownload(model);
     setError(undefined);
+    setDownloadProgress((prev) => ({
+      ...prev,
+      [model]: {
+        model,
+        stage: "queued",
+        downloaded_bytes: 0,
+        total_bytes: undefined,
+        percent: 0,
+        done: false,
+        error: undefined,
+        message: "Queued for download",
+      },
+    }));
     try {
       await invoke("download_model", { model });
       await loadModels();
@@ -470,6 +521,12 @@ function ModelManager() {
                 const isDownloading = activeDownload === model.name;
                 const isDownloaded = model.downloaded;
                 const canDownload = model.can_download;
+                const progress = downloadProgress[model.name];
+                const progressPercent =
+                  typeof progress?.percent === "number"
+                    ? Math.max(0, Math.min(100, progress.percent))
+                    : undefined;
+                const progressText = progress?.message || "Downloading model";
 
                 return (
                   <motion.div
@@ -495,6 +552,26 @@ function ModelManager() {
                           </>
                         )}
                       </div>
+                      {isDownloading && (
+                        <div className="mt-3 w-[260px] max-w-full">
+                          <div className="mb-1 flex items-center justify-between text-[11px] text-white/45">
+                            <span className="truncate pr-2">{progressText}</span>
+                            <span className="tabular-nums">
+                              {typeof progressPercent === "number"
+                                ? `${Math.round(progressPercent)}%`
+                                : "--"}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                            <div
+                              className="h-full rounded-full bg-emerald-400 transition-all duration-200"
+                              style={{
+                                width: `${progressPercent ?? 10}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -551,7 +628,9 @@ function ModelManager() {
                             </span>
                           )}
                           {isDownloading
-                            ? "Downloading..."
+                            ? typeof progressPercent === "number"
+                              ? `Downloading ${Math.round(progressPercent)}%`
+                              : "Downloading..."
                             : !canDownload
                               ? "Unavailable"
                               : "Download"}

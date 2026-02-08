@@ -1,8 +1,9 @@
 use serde::Serialize;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::Manager;
 use stt::{
-    create_adapter, is_mlx_model_name, is_sherpa_model_name, SttConfig, MLX_PARAKEET_V2_MODEL,
-    SHERPA_PARAKEET_INT8_MODEL,
+    create_adapter, is_mlx_model_name, is_sherpa_model_name, set_model_download_progress_handler,
+    ModelDownloadProgress, SttConfig, MLX_PARAKEET_V2_MODEL, SHERPA_PARAKEET_INT8_MODEL,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -12,6 +13,25 @@ pub struct ModelInfo {
     pub downloaded: bool,
     pub can_download: bool,
     pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ModelDownloadProgressEvent {
+    model: String,
+    stage: String,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    percent: Option<f32>,
+    done: bool,
+    error: Option<String>,
+    message: Option<String>,
+}
+
+fn emit_model_download_progress_event(
+    app: &tauri::AppHandle,
+    payload: ModelDownloadProgressEvent,
+) {
+    let _ = app.emit_all("model-download-progress", payload);
 }
 
 fn active_model_store() -> &'static Mutex<String> {
@@ -67,16 +87,87 @@ pub async fn list_models() -> Result<Vec<ModelInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn download_model(model: String) -> Result<(), String> {
+pub async fn download_model(app: tauri::AppHandle, model: String) -> Result<(), String> {
+    let model_for_callback = model.clone();
+    let app_for_callback = app.clone();
+    set_model_download_progress_handler(Some(Arc::new(move |progress: ModelDownloadProgress| {
+        if progress.model_name != model_for_callback {
+            return;
+        }
+        emit_model_download_progress_event(
+            &app_for_callback,
+            ModelDownloadProgressEvent {
+                model: progress.model_name,
+                stage: progress.stage,
+                downloaded_bytes: progress.downloaded_bytes,
+                total_bytes: progress.total_bytes,
+                percent: progress.percent,
+                done: progress.done,
+                error: progress.error,
+                message: progress.message,
+            },
+        );
+    })));
+
+    emit_model_download_progress_event(
+        &app,
+        ModelDownloadProgressEvent {
+            model: model.clone(),
+            stage: "queued".to_string(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            percent: Some(0.0),
+            done: false,
+            error: None,
+            message: Some("Queued for download".to_string()),
+        },
+    );
+
     let mut adapter = create_adapter().map_err(|e| e.to_string())?;
-    adapter
+    let result = adapter
         .initialize(SttConfig {
-            model_name: model,
+            model_name: model.clone(),
             ..Default::default()
         })
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
+        .map_err(|e| e.to_string());
+
+    set_model_download_progress_handler(None);
+
+    match result {
+        Ok(_) => {
+            emit_model_download_progress_event(
+                &app,
+                ModelDownloadProgressEvent {
+                    model,
+                    stage: "ready".to_string(),
+                    downloaded_bytes: 0,
+                    total_bytes: None,
+                    percent: Some(100.0),
+                    done: true,
+                    error: None,
+                    message: Some("Download complete".to_string()),
+                },
+            );
+            Ok(())
+        }
+        Err(error) => {
+            emit_model_download_progress_event(
+                &app,
+                ModelDownloadProgressEvent {
+                    model,
+                    stage: "error".to_string(),
+                    downloaded_bytes: 0,
+                    total_bytes: None,
+                    percent: None,
+                    done: true,
+                    error: Some(error.clone()),
+                    message: Some("Download failed".to_string()),
+                },
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]

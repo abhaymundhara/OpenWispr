@@ -1,5 +1,6 @@
 use crate::{
-    is_mlx_model_name, AudioFormat, Result, SttConfig, SttError, TranscriptSegment, Transcription,
+    emit_model_download_progress, is_mlx_model_name, AudioFormat, ModelDownloadProgress, Result,
+    SttConfig, SttError, TranscriptSegment, Transcription,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,17 @@ impl SharedMlxParakeetAdapter {
         let model_ref = resolve_model_ref(&config)?;
         let cache_dir = mlx_cache_dir()?;
 
+        emit_model_download_progress(ModelDownloadProgress {
+            model_name: model_ref.clone(),
+            stage: "prepare".to_string(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            percent: Some(0.0),
+            done: false,
+            error: None,
+            message: Some("Preparing MLX runtime".to_string()),
+        });
+
         tokio::task::spawn_blocking({
             let model_ref = model_ref.clone();
             let cache_dir = cache_dir.clone();
@@ -56,6 +68,16 @@ impl SharedMlxParakeetAdapter {
                 marker.display()
             ))
         })?;
+        emit_model_download_progress(ModelDownloadProgress {
+            model_name: model_ref.clone(),
+            stage: "ready".to_string(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            percent: Some(100.0),
+            done: true,
+            error: None,
+            message: Some("MLX model ready".to_string()),
+        });
 
         let mut state = self.state.write().await;
         state.model_ref = Some(model_ref);
@@ -140,7 +162,28 @@ fn resolve_model_ref(config: &SttConfig) -> Result<String> {
 }
 
 fn ensure_parakeet_ready(model_ref: &str, cache_dir: &Path) -> Result<()> {
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_ref.to_string(),
+        stage: "runtime-check".to_string(),
+        downloaded_bytes: 0,
+        total_bytes: None,
+        percent: Some(10.0),
+        done: false,
+        error: None,
+        message: Some("Checking Python runtime".to_string()),
+    });
     ensure_python_available()?;
+
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_ref.to_string(),
+        stage: "runtime-check".to_string(),
+        downloaded_bytes: 0,
+        total_bytes: None,
+        percent: Some(25.0),
+        done: false,
+        error: None,
+        message: Some("Preparing parakeet-mlx package".to_string()),
+    });
     ensure_parakeet_package_installed()?;
 
     let script = r#"
@@ -150,6 +193,16 @@ model_ref = sys.argv[1]
 cache_dir = sys.argv[2]
 from_pretrained(model_ref, cache_dir=cache_dir)
 "#;
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_ref.to_string(),
+        stage: "download".to_string(),
+        downloaded_bytes: 0,
+        total_bytes: None,
+        percent: Some(40.0),
+        done: false,
+        error: None,
+        message: Some("Downloading MLX model weights".to_string()),
+    });
 
     let output = Command::new(PYTHON_BIN)
         .args(["-c", script, model_ref, &cache_dir.to_string_lossy()])
@@ -159,12 +212,33 @@ from_pretrained(model_ref, cache_dir=cache_dir)
         })?;
 
     if !output.status.success() {
-        return Err(SttError::ModelLoadError(format!(
+        let message = format!(
             "failed to download/load MLX model '{}': {}",
             model_ref,
             String::from_utf8_lossy(&output.stderr).trim()
-        )));
+        );
+        emit_model_download_progress(ModelDownloadProgress {
+            model_name: model_ref.to_string(),
+            stage: "download".to_string(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            percent: Some(40.0),
+            done: true,
+            error: Some(message.clone()),
+            message: Some("MLX model setup failed".to_string()),
+        });
+        return Err(SttError::ModelLoadError(message));
     }
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_ref.to_string(),
+        stage: "download".to_string(),
+        downloaded_bytes: 0,
+        total_bytes: None,
+        percent: Some(90.0),
+        done: false,
+        error: None,
+        message: Some("Finalizing MLX model".to_string()),
+    });
 
     Ok(())
 }

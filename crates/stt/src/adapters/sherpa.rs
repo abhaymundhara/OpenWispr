@@ -1,11 +1,11 @@
 use crate::{
-    is_sherpa_model_name, AudioFormat, Result, SttConfig, SttError, TranscriptSegment,
-    Transcription,
+    emit_model_download_progress, is_sherpa_model_name, AudioFormat, ModelDownloadProgress, Result,
+    SttConfig, SttError, TranscriptSegment, Transcription,
 };
 use bzip2::read::BzDecoder;
 use sherpa_rs::transducer::{TransducerConfig, TransducerRecognizer};
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
@@ -187,8 +187,19 @@ fn resolve_model_root(config: &SttConfig) -> Result<PathBuf> {
 }
 
 fn ensure_model_downloaded() -> Result<PathBuf> {
+    let model_name = "sherpa-onnx/parakeet-tdt-0.6b-v2-int8".to_string();
     let root = sherpa_model_root_dir()?;
     if has_required_files(&root) {
+        emit_model_download_progress(ModelDownloadProgress {
+            model_name,
+            stage: "ready".to_string(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            percent: Some(100.0),
+            done: true,
+            error: None,
+            message: Some("Model already downloaded".to_string()),
+        });
         return Ok(root);
     }
 
@@ -208,11 +219,36 @@ fn ensure_model_downloaded() -> Result<PathBuf> {
     let response = ureq::get(SHERPA_PARKEET_RELEASE_URL)
         .call()
         .map_err(|e| {
-            SttError::ModelLoadError(format!(
+            let message = format!(
                 "failed to download sherpa model {}: {e}",
                 SHERPA_PARKEET_RELEASE_URL
-            ))
+            );
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.clone(),
+                stage: "download".to_string(),
+                downloaded_bytes: 0,
+                total_bytes: None,
+                percent: None,
+                done: true,
+                error: Some(message.clone()),
+                message: Some("Download request failed".to_string()),
+            });
+            SttError::ModelLoadError(message)
         })?;
+    let total_bytes = response
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0);
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_name.clone(),
+        stage: "download".to_string(),
+        downloaded_bytes: 0,
+        total_bytes,
+        percent: Some(0.0),
+        done: false,
+        error: None,
+        message: Some("Downloading sherpa model".to_string()),
+    });
 
     let mut reader = response.into_reader();
     let mut writer = BufWriter::new(File::create(&archive_tmp).map_err(|e| {
@@ -221,12 +257,62 @@ fn ensure_model_downloaded() -> Result<PathBuf> {
             archive_tmp.display()
         ))
     })?);
-    io::copy(&mut reader, &mut writer).map_err(|e| {
-        SttError::ModelLoadError(format!(
-            "failed while writing sherpa archive {}: {e}",
-            archive_tmp.display()
-        ))
-    })?;
+    let mut downloaded_bytes = 0_u64;
+    let mut last_emitted = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buffer).map_err(|e| {
+            let message = format!("failed while reading sherpa model stream: {e}");
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.clone(),
+                stage: "download".to_string(),
+                downloaded_bytes,
+                total_bytes,
+                percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+                done: true,
+                error: Some(message.clone()),
+                message: Some("Download stream read failed".to_string()),
+            });
+            SttError::ModelLoadError(message)
+        })?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..n]).map_err(|e| {
+            let message = format!(
+                "failed while writing sherpa archive {}: {e}",
+                archive_tmp.display()
+            );
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.clone(),
+                stage: "download".to_string(),
+                downloaded_bytes,
+                total_bytes,
+                percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+                done: true,
+                error: Some(message.clone()),
+                message: Some("Write to temporary file failed".to_string()),
+            });
+            SttError::ModelLoadError(message)
+        })?;
+        downloaded_bytes += n as u64;
+        if downloaded_bytes.saturating_sub(last_emitted) >= 256 * 1024
+            || total_bytes.is_some_and(|total| downloaded_bytes >= total)
+        {
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.clone(),
+                stage: "download".to_string(),
+                downloaded_bytes,
+                total_bytes,
+                percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+                done: false,
+                error: None,
+                message: Some("Downloading sherpa model".to_string()),
+            });
+            last_emitted = downloaded_bytes;
+        }
+    }
+
     writer.flush().map_err(|e| {
         SttError::ModelLoadError(format!(
             "failed to flush sherpa archive {}: {e}",
@@ -251,6 +337,16 @@ fn ensure_model_downloaded() -> Result<PathBuf> {
             archive_tmp.display()
         ))
     })?;
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_name.clone(),
+        stage: "extract".to_string(),
+        downloaded_bytes,
+        total_bytes,
+        percent: Some(92.0),
+        done: false,
+        error: None,
+        message: Some("Extracting model archive".to_string()),
+    });
     let decoder = BzDecoder::new(archive_file);
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(&unpack_dir).map_err(|e| {
@@ -298,6 +394,17 @@ fn ensure_model_downloaded() -> Result<PathBuf> {
             root.display()
         )));
     }
+
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name,
+        stage: "ready".to_string(),
+        downloaded_bytes,
+        total_bytes,
+        percent: Some(100.0),
+        done: true,
+        error: None,
+        message: Some("Sherpa model ready".to_string()),
+    });
 
     Ok(root)
 }
