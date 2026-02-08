@@ -101,7 +101,7 @@ fn main() {
                         show_models_window(app_handle);
                     }
                     "quit" => {
-                        std::process::exit(0);
+                        app_handle.exit(0);
                     }
                     _ => {}
                 }
@@ -114,6 +114,17 @@ fn main() {
                 // Keep overlay non-interactive so it does not block the active app
                 // while still allowing us to keep the process alive.
                 let _ = main_window.set_ignore_cursor_events(true);
+
+                #[cfg(target_os = "macos")]
+                {
+                    use cocoa::appkit::NSWindow;
+                    use cocoa::base::id;
+                    
+                    let ns_window = main_window.ns_window().unwrap() as id;
+                    unsafe {
+                        ns_window.setHasShadow_(cocoa::base::NO);
+                    }
+                }
             }
 
             #[cfg(target_os = "macos")]

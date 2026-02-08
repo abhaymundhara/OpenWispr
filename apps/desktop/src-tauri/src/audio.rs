@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -91,13 +92,18 @@ fn verbose_logs_enabled() -> bool {
 }
 
 enum ClipboardSnapshot {
+    Html {
+        html: String,
+        alt_text: String,
+    },
     Text(String),
     Image {
         width: usize,
         height: usize,
         bytes: Vec<u8>,
     },
-    OpaqueOrEmpty,
+    FileList(Vec<PathBuf>),
+    Clear,
 }
 
 #[cfg(target_os = "macos")]
@@ -236,7 +242,7 @@ fn restore_active_paste_target() {
             target.pid
         ))
         .status();
-    if result.as_ref().is_ok_and(|status| status.success()) {
+    if result.as_ref().is_ok_and(|status| status.success()) && verbose_logs_enabled() {
         println!(
             "[paste] restored focus to app pid={} name='{}'",
             target.pid, target.name
@@ -273,7 +279,9 @@ fn restore_active_paste_target() {
     unsafe {
         let _ = SetForegroundWindow(hwnd);
     }
-    println!("[paste] restored focus to HWND 0x{:X}", hwnd as usize);
+    if verbose_logs_enabled() {
+        println!("[paste] restored focus to HWND 0x{:X}", hwnd as usize);
+    }
     thread::sleep(Duration::from_millis(45));
 }
 
@@ -281,6 +289,11 @@ fn restore_active_paste_target() {
 fn restore_active_paste_target() {}
 
 fn capture_clipboard(clipboard: &mut Clipboard) -> ClipboardSnapshot {
+    if let Ok(html) = clipboard.get().html() {
+        let alt_text = clipboard.get_text().unwrap_or_else(|_| html.clone());
+        return ClipboardSnapshot::Html { html, alt_text };
+    }
+
     if let Ok(text) = clipboard.get_text() {
         return ClipboardSnapshot::Text(text);
     }
@@ -293,26 +306,76 @@ fn capture_clipboard(clipboard: &mut Clipboard) -> ClipboardSnapshot {
         };
     }
 
-    ClipboardSnapshot::OpaqueOrEmpty
+    if let Ok(files) = clipboard.get().file_list() {
+        return ClipboardSnapshot::FileList(files);
+    }
+
+    ClipboardSnapshot::Clear
 }
 
-fn restore_clipboard(clipboard: &mut Clipboard, snapshot: ClipboardSnapshot) {
+fn restore_clipboard(clipboard: &mut Clipboard, snapshot: &ClipboardSnapshot) -> Result<(), String> {
     match snapshot {
-        ClipboardSnapshot::Text(text) => {
-            let _ = clipboard.set_text(text);
-        }
+        ClipboardSnapshot::Html { html, alt_text } => clipboard
+            .set()
+            .html(html.clone(), Some(alt_text.clone()))
+            .map_err(|e| format!("failed to restore html clipboard: {}", e)),
+        ClipboardSnapshot::Text(text) => clipboard
+            .set_text(text.clone())
+            .map_err(|e| format!("failed to restore text clipboard: {}", e)),
         ClipboardSnapshot::Image {
             width,
             height,
             bytes,
-        } => {
-            let _ = clipboard.set_image(ImageData {
-                width,
-                height,
-                bytes: Cow::Owned(bytes),
-            });
+        } => clipboard
+            .set_image(ImageData {
+                width: *width,
+                height: *height,
+                bytes: Cow::Borrowed(bytes.as_slice()),
+            })
+            .map_err(|e| format!("failed to restore image clipboard: {}", e)),
+        ClipboardSnapshot::FileList(paths) => clipboard
+            .set()
+            .file_list(paths)
+            .map_err(|e| format!("failed to restore file list clipboard: {}", e)),
+        ClipboardSnapshot::Clear => clipboard
+            .clear()
+            .map_err(|e| format!("failed to clear clipboard during restore: {}", e)),
+    }
+}
+
+fn restore_clipboard_with_retry(snapshot: ClipboardSnapshot) {
+    for attempt in 1..=10 {
+        let mut clipboard = match Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(err) => {
+                if verbose_logs_enabled() {
+                    eprintln!(
+                        "[paste] restore attempt {}: clipboard unavailable: {}",
+                        attempt, err
+                    );
+                }
+                thread::sleep(Duration::from_millis(80));
+                continue;
+            }
+        };
+
+        match restore_clipboard(&mut clipboard, &snapshot) {
+            Ok(_) => return,
+            Err(err) => {
+                if verbose_logs_enabled() {
+                    eprintln!(
+                        "[paste] restore attempt {} failed: {}",
+                        attempt, err
+                    );
+                }
+            }
         }
-        ClipboardSnapshot::OpaqueOrEmpty => {}
+
+        thread::sleep(Duration::from_millis(80));
+    }
+
+    if verbose_logs_enabled() {
+        eprintln!("[paste] failed to restore clipboard after retries");
     }
 }
 
@@ -338,53 +401,40 @@ fn insert_text_directly(text: &str) {
 }
 
 fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
-    use std::io::Write;
-
     if text.trim().is_empty() {
-        println!("[paste] skipping empty text");
         return Ok(());
     }
 
-    println!("[paste] preparing to paste {} chars", text.chars().count());
-    let _ = std::io::stdout().flush();
-
-    // ── Step 1: Clipboard work while our app is still active ──
+    // Step 1: stage transcription in system clipboard while OpenWispr is still active.
     let mut clipboard = match Clipboard::new() {
         Ok(clipboard) => clipboard,
         Err(err) => {
-            eprintln!("[paste] clipboard unavailable, falling back to direct typing: {}", err);
+            if verbose_logs_enabled() {
+                eprintln!("[paste] clipboard unavailable, falling back to direct typing: {}", err);
+            }
             restore_active_paste_target();
             insert_text_directly(text);
             return Ok(());
         }
     };
 
-    println!("[paste] clipboard acquired, saving snapshot");
-    let _ = std::io::stdout().flush();
     let snapshot = capture_clipboard(&mut clipboard);
 
     if let Err(err) = clipboard.set_text(text.to_string()) {
-        eprintln!("[paste] failed to set clipboard: {}", err);
+        if verbose_logs_enabled() {
+            eprintln!("[paste] failed to set clipboard: {}", err);
+        }
         restore_active_paste_target();
         insert_text_directly(text);
         return Ok(());
     }
 
-    println!("[paste] clipboard loaded with transcription text");
-    let _ = std::io::stdout().flush();
-
-    // ── Step 2: Focus target + Cmd+V in ONE osascript call ──
-    // CRITICAL: After we give focus to another app, macOS may kill our
-    // Accessory-policy process during any thread::sleep. By doing the
-    // focus switch AND the keystroke inside a single osascript invocation,
-    // the paste happens in a separate process that survives even if we die.
+    // Step 2: focus target and paste.
+    let mut paste_done = false;
     #[cfg(target_os = "macos")]
     {
         let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
         if let Some(target) = target {
-            println!("[paste] osascript: focus pid={} + Cmd+V", target.pid);
-            let _ = std::io::stdout().flush();
-
             let script = format!(
                 r#"tell application "System Events"
     set frontmost of (first application process whose unix id is {}) to true
@@ -399,24 +449,11 @@ end tell"#,
                 .arg(&script)
                 .status();
 
-            match result {
-                Ok(status) if status.success() => {
-                    println!("[paste] osascript paste completed successfully");
-                    let _ = std::io::stdout().flush();
-                }
-                Ok(status) => {
-                    eprintln!("[paste] osascript exited with status: {}", status);
-                }
-                Err(err) => {
-                    eprintln!("[paste] osascript failed: {}", err);
-                }
+            if result.as_ref().is_ok_and(|status| status.success()) {
+                paste_done = true;
+            } else if verbose_logs_enabled() {
+                eprintln!("[paste] osascript focus+paste failed");
             }
-        } else {
-            // No saved target — fall back to enigo
-            println!("[paste] no target app, using enigo paste");
-            let _ = std::io::stdout().flush();
-            thread::sleep(Duration::from_millis(50));
-            trigger_paste_shortcut();
         }
     }
 
@@ -425,17 +462,18 @@ end tell"#,
         restore_active_paste_target();
         thread::sleep(Duration::from_millis(50));
         trigger_paste_shortcut();
+        paste_done = true;
     }
 
-    // ── Step 3: Restore clipboard ──
-    // Give the target app a moment to consume the paste
-    thread::sleep(Duration::from_millis(80));
-    println!("[paste] restoring original clipboard");
-    let _ = std::io::stdout().flush();
-    restore_clipboard(&mut clipboard, snapshot);
+    if !paste_done {
+        restore_active_paste_target();
+        thread::sleep(Duration::from_millis(50));
+        trigger_paste_shortcut();
+    }
 
-    println!("[paste] paste completed successfully");
-    let _ = std::io::stdout().flush();
+    // Step 3: restore original clipboard (reliable retries).
+    thread::sleep(Duration::from_millis(120));
+    restore_clipboard_with_retry(snapshot);
 
     Ok(())
 }

@@ -514,9 +514,13 @@ function DictationPillApp() {
 
   useEffect(() => {
     // Force transparency on mount
-    document.documentElement.style.background = "transparent";
-    document.body.style.background = "transparent";
-    document.getElementById("root")!.style.background = "transparent";
+    document.documentElement.style.backgroundColor = "transparent";
+    document.body.style.backgroundColor = "transparent";
+    const root = document.getElementById("root");
+    if (root) root.style.backgroundColor = "transparent";
+
+    // Also remove any potential shadows or backgrounds from the window itself logic via class manipulation if needed
+    // But mainly targeting root elements.
 
     if (fnHeld && !previousFnHeld.current) {
       playStartSound();

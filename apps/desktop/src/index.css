@@ -12,7 +12,7 @@ html {
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: light dark;
+  /* color-scheme: light dark; REMOVED to prevent opaque background */
   background-color: transparent !important;
   background: transparent !important;
 
