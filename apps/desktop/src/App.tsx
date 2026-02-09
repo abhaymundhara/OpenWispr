@@ -1455,16 +1455,12 @@ function DictationPillApp() {
 
   useEffect(() => {
     let unlistenHold: (() => void) | undefined;
-    let unlistenToggle: (() => void) | undefined;
     let unlistenStatus: (() => void) | undefined;
 
     const setupListener = async () => {
       try {
         unlistenHold = await listen<boolean>("fn-hold", (event) => {
           setFnHeld(event.payload);
-        });
-        unlistenToggle = await listen("global-shortcut-pressed", () => {
-          setFnHeld((prev) => !prev);
         });
         unlistenStatus = await listen<TranscriptionStatusEvent>(
           "transcription-status",
@@ -1488,17 +1484,8 @@ function DictationPillApp() {
       }
     };
     setupListener();
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "`") {
-        setFnHeld((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
       if (unlistenHold) unlistenHold();
-      if (unlistenToggle) unlistenToggle();
       if (unlistenStatus) unlistenStatus();
     };
   }, []);

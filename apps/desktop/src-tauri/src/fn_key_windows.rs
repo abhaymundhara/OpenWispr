@@ -141,7 +141,7 @@ fn is_shortcut_active(spec: &ShortcutSpec, state: &FnHoldState) -> bool {
     if let Some(key) = &spec.key {
         return state.pressed_keys.len() == 1 && state.pressed_keys.contains(key);
     }
-    state.pressed_keys.is_empty()
+    true
 }
 
 fn vkey_to_key_token(vkey: u16) -> Option<String> {

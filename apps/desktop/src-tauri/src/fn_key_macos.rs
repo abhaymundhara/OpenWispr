@@ -97,8 +97,7 @@ fn sync_hold_signal(state: &mut FnHoldState) {
     }
 }
 
-fn update_modifier_state_from_flags(state: &mut FnHoldState, flags: CGEventFlags) {
-    state.fn_down = flags.contains(CGEventFlags::MaskSecondaryFn);
+fn update_non_fn_modifier_state_from_flags(state: &mut FnHoldState, flags: CGEventFlags) {
     state.ctrl_down = flags.contains(CGEventFlags::MaskControl);
     state.shift_down = flags.contains(CGEventFlags::MaskShift);
     state.alt_down = flags.contains(CGEventFlags::MaskAlternate);
@@ -124,7 +123,7 @@ fn is_shortcut_active(spec: &ShortcutSpec, state: &FnHoldState) -> bool {
     if let Some(key) = &spec.key {
         return state.pressed_keys.len() == 1 && state.pressed_keys.contains(key);
     }
-    state.pressed_keys.is_empty()
+    true
 }
 
 fn key_token_from_keycode(keycode: i64) -> Option<String> {
@@ -199,7 +198,17 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
     let event_ref = event.as_ref();
 
     let flags = CGEvent::flags(Some(event_ref));
-    update_modifier_state_from_flags(state, flags);
+    update_non_fn_modifier_state_from_flags(state, flags);
+
+    if event_type == CGEventType::FlagsChanged {
+        let keycode =
+            CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
+        // Only trust Fn state when the actual Fn key emits a FlagsChanged event.
+        // This avoids false positives from special keys (e.g. dictation/mic).
+        if keycode == 63 {
+            state.fn_down = flags.contains(CGEventFlags::MaskSecondaryFn);
+        }
+    }
 
     if event_type == CGEventType::KeyDown || event_type == CGEventType::KeyUp {
         let keycode = CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
