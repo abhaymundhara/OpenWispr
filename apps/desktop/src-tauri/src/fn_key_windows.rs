@@ -1,6 +1,8 @@
 #![cfg(target_os = "windows")]
 
 use crate::audio::{self, AudioCapture};
+use crate::store::ShortcutSpec;
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr::null_mut;
@@ -13,7 +15,11 @@ use windows_sys::Win32::UI::Input::{
     RAWKEYBOARD, RID_INPUT, RIDEV_INPUTSINK, RIM_TYPEKEYBOARD,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    VK_F22, VK_F23, VK_F24, VK_RETURN, VK_SPACE, VK_TAB,
+    VK_0, VK_9, VK_A, VK_BACK, VK_CAPITAL, VK_CONTROL, VK_ESCAPE, VK_F1, VK_F12, VK_F22, VK_F23,
+    VK_F24, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_OEM_1, VK_OEM_2, VK_OEM_3,
+    VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_COMMA, VK_OEM_MINUS, VK_OEM_PERIOD,
+    VK_OEM_PLUS, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_SPACE,
+    VK_TAB,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA,
@@ -28,12 +34,17 @@ static TASK_HANDLE: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex:
 
 struct FnHoldState {
     app: AppHandle<Wry>,
-    fn_is_down: bool,
-    is_push_key_down: bool,
+    fn_down: bool,
+    ctrl_down: bool,
+    shift_down: bool,
+    alt_down: bool,
+    meta_down: bool,
+    pressed_keys: HashSet<String>,
     is_push_active: bool,
     is_hands_free: bool,
     is_recording_active: bool,
     hold_emitted: bool,
+    hands_free_combo_prev_active: bool,
     debug: bool,
     vkey_override: Option<u16>,
     makecode_override: Option<u16>,
@@ -45,20 +56,20 @@ fn wide(s: &str) -> Vec<u16> {
     v
 }
 
-fn hands_free_toggle_vkey(shortcut: &str) -> u16 {
-    match crate::store::normalize_shortcut(shortcut).as_str() {
-        "fn+enter" => VK_RETURN as u16,
-        "fn+tab" => VK_TAB as u16,
-        _ => VK_SPACE as u16, // fn+space
-    }
+fn fallback_push_spec() -> ShortcutSpec {
+    crate::store::parse_shortcut("fn").unwrap_or_default()
 }
 
-fn push_to_talk_vkey(shortcut: &str) -> Option<u16> {
-    match crate::store::normalize_shortcut(shortcut).as_str() {
-        "fn+enter" => Some(VK_RETURN as u16),
-        "fn+tab" => Some(VK_TAB as u16),
-        _ => None, // fn (no secondary key)
-    }
+fn fallback_hands_free_spec() -> ShortcutSpec {
+    crate::store::parse_shortcut("fn+space").unwrap_or_default()
+}
+
+fn load_shortcuts() -> (ShortcutSpec, ShortcutSpec) {
+    let push = crate::store::parse_shortcut(&crate::store::push_to_talk_shortcut())
+        .unwrap_or_else(|_| fallback_push_spec());
+    let hands_free = crate::store::parse_shortcut(&crate::store::hands_free_toggle_shortcut())
+        .unwrap_or_else(|_| fallback_hands_free_spec());
+    (push, hands_free)
 }
 
 fn start_capture(state: &FnHoldState) -> Result<(), String> {
@@ -82,26 +93,6 @@ fn stop_capture(state: &FnHoldState) {
     }
 }
 
-fn sync_hold_signal(state: &mut FnHoldState) {
-    let should_emit_hold = state.is_hands_free || state.is_push_active;
-    if should_emit_hold != state.hold_emitted {
-        state.hold_emitted = should_emit_hold;
-        let _ = state.app.emit_all("fn-hold", should_emit_hold);
-    }
-}
-
-fn recompute_push_active(state: &mut FnHoldState, push_key_vkey: Option<u16>) {
-    let should_push_active = if state.is_hands_free {
-        false
-    } else {
-        match push_key_vkey {
-            Some(_) => state.fn_is_down && state.is_push_key_down,
-            None => state.fn_is_down,
-        }
-    };
-    state.is_push_active = should_push_active;
-}
-
 fn sync_recording(state: &mut FnHoldState) {
     let should_record = state.is_hands_free || state.is_push_active;
     if should_record == state.is_recording_active {
@@ -110,12 +101,8 @@ fn sync_recording(state: &mut FnHoldState) {
 
     if should_record {
         match start_capture(state) {
-            Ok(_) => {
-                state.is_recording_active = true;
-            }
-            Err(err) if err == "Already recording" => {
-                state.is_recording_active = true;
-            }
+            Ok(_) => state.is_recording_active = true,
+            Err(err) if err == "Already recording" => state.is_recording_active = true,
             Err(err) => {
                 eprintln!("Failed to start recording: {}", err);
                 state.is_recording_active = false;
@@ -124,6 +111,70 @@ fn sync_recording(state: &mut FnHoldState) {
     } else {
         stop_capture(state);
         state.is_recording_active = false;
+    }
+}
+
+fn sync_hold_signal(state: &mut FnHoldState) {
+    let should_emit_hold = state.is_hands_free || state.is_push_active;
+    if should_emit_hold != state.hold_emitted {
+        state.hold_emitted = should_emit_hold;
+        let _ = state.app.emit_all("fn-hold", should_emit_hold);
+    }
+}
+
+fn is_shortcut_active(spec: &ShortcutSpec, state: &FnHoldState) -> bool {
+    if spec.r#fn && !state.fn_down {
+        return false;
+    }
+    if spec.ctrl && !state.ctrl_down {
+        return false;
+    }
+    if spec.shift && !state.shift_down {
+        return false;
+    }
+    if spec.alt && !state.alt_down {
+        return false;
+    }
+    if spec.meta && !state.meta_down {
+        return false;
+    }
+    if let Some(key) = &spec.key {
+        return state.pressed_keys.contains(key);
+    }
+    true
+}
+
+fn vkey_to_key_token(vkey: u16) -> Option<String> {
+    if (VK_A..=VK_A + 25).contains(&vkey) {
+        let ch = (b'a' + (vkey - VK_A as u16) as u8) as char;
+        return Some(ch.to_string());
+    }
+    if (VK_0..=VK_9).contains(&vkey) {
+        let ch = (b'0' + (vkey - VK_0 as u16) as u8) as char;
+        return Some(ch.to_string());
+    }
+    if (VK_F1..=VK_F12).contains(&vkey) {
+        return Some(format!("f{}", vkey - VK_F1 as u16 + 1));
+    }
+
+    match vkey {
+        x if x == VK_SPACE as u16 => Some("space".to_string()),
+        x if x == VK_RETURN as u16 => Some("enter".to_string()),
+        x if x == VK_TAB as u16 => Some("tab".to_string()),
+        x if x == VK_ESCAPE as u16 => Some("escape".to_string()),
+        x if x == VK_BACK as u16 => Some("backspace".to_string()),
+        x if x == VK_OEM_MINUS as u16 => Some("-".to_string()),
+        x if x == VK_OEM_PLUS as u16 => Some("=".to_string()),
+        x if x == VK_OEM_COMMA as u16 => Some(",".to_string()),
+        x if x == VK_OEM_PERIOD as u16 => Some(".".to_string()),
+        x if x == VK_OEM_1 as u16 => Some(";".to_string()),
+        x if x == VK_OEM_2 as u16 => Some("/".to_string()),
+        x if x == VK_OEM_3 as u16 => Some("`".to_string()),
+        x if x == VK_OEM_4 as u16 => Some("[".to_string()),
+        x if x == VK_OEM_5 as u16 => Some("\\".to_string()),
+        x if x == VK_OEM_6 as u16 => Some("]".to_string()),
+        x if x == VK_OEM_7 as u16 => Some("'".to_string()),
+        _ => None,
     }
 }
 
@@ -202,23 +253,37 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
         );
     }
 
-    let push_key_vkey = push_to_talk_vkey(&crate::store::push_to_talk_shortcut());
-    let hands_free_vkey = hands_free_toggle_vkey(&crate::store::hands_free_toggle_shortcut());
-
     if is_fn_key(vkey, makecode, state) {
-        state.fn_is_down = is_down;
-        if !state.fn_is_down {
-            state.is_push_key_down = false;
+        state.fn_down = is_down;
+    }
+
+    match vkey {
+        x if x == VK_CONTROL as u16 || x == VK_LCONTROL as u16 || x == VK_RCONTROL as u16 => {
+            state.ctrl_down = is_down;
+        }
+        x if x == VK_SHIFT as u16 || x == VK_LSHIFT as u16 || x == VK_RSHIFT as u16 => {
+            state.shift_down = is_down;
+        }
+        x if x == VK_MENU as u16 || x == VK_LMENU as u16 || x == VK_RMENU as u16 => {
+            state.alt_down = is_down;
+        }
+        x if x == VK_LWIN as u16 || x == VK_RWIN as u16 => {
+            state.meta_down = is_down;
+        }
+        _ => {}
+    }
+
+    if let Some(key_token) = vkey_to_key_token(vkey) {
+        if is_down {
+            state.pressed_keys.insert(key_token);
+        } else {
+            state.pressed_keys.remove(&key_token);
         }
     }
 
-    if let Some(push_key_vkey) = push_key_vkey {
-        if vkey == push_key_vkey {
-            state.is_push_key_down = is_down;
-        }
-    }
-
-    if is_down && vkey == hands_free_vkey && state.fn_is_down {
+    let (push_shortcut, hands_free_shortcut) = load_shortcuts();
+    let hands_combo_active = is_shortcut_active(&hands_free_shortcut, state);
+    if hands_combo_active && !state.hands_free_combo_prev_active {
         state.is_hands_free = !state.is_hands_free;
         if state.is_hands_free {
             println!("[Shortcuts] Hands-free mode ACTIVATED");
@@ -226,8 +291,14 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
             println!("[Shortcuts] Hands-free mode DEACTIVATED");
         }
     }
+    state.hands_free_combo_prev_active = hands_combo_active;
 
-    recompute_push_active(state, push_key_vkey);
+    state.is_push_active = if state.is_hands_free {
+        false
+    } else {
+        is_shortcut_active(&push_shortcut, state)
+    };
+
     sync_recording(state);
     sync_hold_signal(state);
 }
@@ -257,12 +328,17 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
 
         let state = Box::new(FnHoldState {
             app,
-            fn_is_down: false,
-            is_push_key_down: false,
+            fn_down: false,
+            ctrl_down: false,
+            shift_down: false,
+            alt_down: false,
+            meta_down: false,
+            pressed_keys: HashSet::new(),
             is_push_active: false,
             is_hands_free: false,
             is_recording_active: false,
             hold_emitted: false,
+            hands_free_combo_prev_active: false,
             debug: std::env::var("OPENWISPR_RAWINPUT_DEBUG").ok().as_deref() == Some("1"),
             vkey_override: parse_env_hex_u16("OPENWISPR_FN_VKEY"),
             makecode_override: parse_env_hex_u16("OPENWISPR_FN_MAKECODE"),

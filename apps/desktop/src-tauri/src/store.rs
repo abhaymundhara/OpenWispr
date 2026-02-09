@@ -80,6 +80,16 @@ pub struct AppStore {
     pub settings: Settings,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShortcutSpec {
+    pub r#fn: bool,
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub meta: bool,
+    pub key: Option<String>,
+}
+
 pub fn normalize_shortcut(raw: &str) -> String {
     raw.split('+')
         .map(|part| part.trim().to_ascii_lowercase())
@@ -88,18 +98,57 @@ pub fn normalize_shortcut(raw: &str) -> String {
         .join("+")
 }
 
-pub fn is_supported_hands_free_shortcut(raw: &str) -> bool {
-    matches!(
-        normalize_shortcut(raw).as_str(),
-        "fn+space" | "fn+enter" | "fn+tab"
-    )
+pub fn parse_shortcut(raw: &str) -> Result<ShortcutSpec, String> {
+    let normalized = normalize_shortcut(raw);
+    if normalized.is_empty() {
+        return Err("Shortcut cannot be empty".to_string());
+    }
+
+    let mut spec = ShortcutSpec::default();
+    for token in normalized.split('+') {
+        match token {
+            "fn" => spec.r#fn = true,
+            "ctrl" | "control" => spec.ctrl = true,
+            "shift" => spec.shift = true,
+            "alt" | "option" => spec.alt = true,
+            "meta" | "cmd" | "command" | "win" | "super" => spec.meta = true,
+            key => {
+                if spec.key.is_some() {
+                    return Err("Shortcut can include only one non-modifier key".to_string());
+                }
+                spec.key = Some(key.to_string());
+            }
+        }
+    }
+
+    if !spec.r#fn && !spec.ctrl && !spec.shift && !spec.alt && !spec.meta && spec.key.is_none() {
+        return Err("Shortcut cannot be empty".to_string());
+    }
+
+    Ok(spec)
 }
 
-pub fn is_supported_push_to_talk_shortcut(raw: &str) -> bool {
-    matches!(
-        normalize_shortcut(raw).as_str(),
-        "fn" | "fn+enter" | "fn+tab"
-    )
+pub fn format_shortcut(spec: &ShortcutSpec) -> String {
+    let mut tokens: Vec<String> = Vec::new();
+    if spec.r#fn {
+        tokens.push("fn".to_string());
+    }
+    if spec.ctrl {
+        tokens.push("ctrl".to_string());
+    }
+    if spec.shift {
+        tokens.push("shift".to_string());
+    }
+    if spec.alt {
+        tokens.push("alt".to_string());
+    }
+    if spec.meta {
+        tokens.push("meta".to_string());
+    }
+    if let Some(key) = &spec.key {
+        tokens.push(key.clone());
+    }
+    tokens.join("+")
 }
 
 pub fn push_to_talk_shortcut() -> String {
@@ -247,23 +296,12 @@ pub fn set_shortcuts(
     hands_free_toggle: String,
     command_mode: String,
 ) -> Result<ShortcutSettings, String> {
-    let push_to_talk = normalize_shortcut(&push_to_talk);
-    if !is_supported_push_to_talk_shortcut(&push_to_talk) {
-        return Err("Push-to-talk shortcut must be Fn, Fn+Enter, or Fn+Tab".to_string());
-    }
-
-    if !is_supported_hands_free_shortcut(&hands_free_toggle) {
-        return Err("Hands-free shortcut must be Fn+Space, Fn+Enter, or Fn+Tab".to_string());
-    }
-    let hands_free_toggle = normalize_shortcut(&hands_free_toggle);
+    let push_to_talk = format_shortcut(&parse_shortcut(&push_to_talk)?);
+    let hands_free_toggle = format_shortcut(&parse_shortcut(&hands_free_toggle)?);
     if push_to_talk == hands_free_toggle {
         return Err("Push-to-talk and hands-free shortcuts must be different".to_string());
     }
-
-    let command_mode = normalize_shortcut(&command_mode);
-    if command_mode.is_empty() {
-        return Err("Command mode shortcut cannot be empty".to_string());
-    }
+    let command_mode = format_shortcut(&parse_shortcut(&command_mode)?);
 
     let mut store = get_store();
     store.settings.shortcuts = ShortcutSettings {
@@ -292,17 +330,21 @@ mod tests {
     }
 
     #[test]
-    fn hands_free_shortcut_support_is_validated() {
-        assert!(is_supported_hands_free_shortcut("fn+space"));
-        assert!(is_supported_hands_free_shortcut(" fn + enter "));
-        assert!(!is_supported_hands_free_shortcut("fn+ctrl"));
+    fn parse_shortcut_canonicalizes_modifiers() {
+        let parsed = parse_shortcut("shift+ctrl+space+fn").unwrap();
+        assert_eq!(format_shortcut(&parsed), "fn+ctrl+shift+space");
     }
 
     #[test]
-    fn push_to_talk_shortcut_support_is_validated() {
-        assert!(is_supported_push_to_talk_shortcut("fn"));
-        assert!(is_supported_push_to_talk_shortcut("fn+enter"));
-        assert!(is_supported_push_to_talk_shortcut(" fn + tab "));
-        assert!(!is_supported_push_to_talk_shortcut("fn+space"));
+    fn parse_shortcut_supports_free_form_combo() {
+        let parsed = parse_shortcut(" Ctrl + Shift + K ").unwrap();
+        assert!(parsed.ctrl);
+        assert!(parsed.shift);
+        assert_eq!(parsed.key.as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn parse_shortcut_rejects_multiple_non_modifier_keys() {
+        assert!(parse_shortcut("ctrl+k+m").is_err());
     }
 }

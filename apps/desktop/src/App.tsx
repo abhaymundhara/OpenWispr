@@ -49,21 +49,94 @@ const DEFAULT_SHORTCUTS: ShortcutSettings = {
   command_mode: "fn+ctrl",
 };
 
-const SHORTCUT_OPTIONS: Record<ShortcutKeyName, string[]> = {
-  push_to_talk: ["fn", "fn+enter", "fn+tab"],
-  hands_free_toggle: ["fn+space", "fn+enter", "fn+tab"],
-  command_mode: ["fn+ctrl", "fn+option", "fn+/"],
+const MODIFIER_TOKENS = new Set(["fn", "ctrl", "control", "shift", "alt", "option", "meta", "cmd", "command", "win", "super"]);
+
+const normalizeEventCodeToken = (code: string): string | null => {
+  if (!code) return null;
+  if (code === "Space") return "space";
+  if (code === "Enter" || code === "NumpadEnter") return "enter";
+  if (code === "Tab") return "tab";
+  if (code === "Escape") return "escape";
+  if (code === "Backspace") return "backspace";
+  if (code === "ArrowUp") return "up";
+  if (code === "ArrowDown") return "down";
+  if (code === "ArrowLeft") return "left";
+  if (code === "ArrowRight") return "right";
+  if (code === "Minus" || code === "NumpadSubtract") return "-";
+  if (code === "Equal" || code === "NumpadAdd") return "=";
+  if (code === "Comma") return ",";
+  if (code === "Period" || code === "NumpadDecimal") return ".";
+  if (code === "Semicolon") return ";";
+  if (code === "Quote") return "'";
+  if (code === "Slash" || code === "NumpadDivide") return "/";
+  if (code === "Backquote") return "`";
+  if (code === "Backslash") return "\\";
+  if (code === "BracketLeft") return "[";
+  if (code === "BracketRight") return "]";
+  if (code.startsWith("Key") && code.length === 4) return code.slice(3).toLowerCase();
+  if (code.startsWith("Digit") && code.length === 6) return code.slice(5);
+  if (code.startsWith("F")) {
+    const maybeFn = code.slice(1);
+    if (/^\d{1,2}$/.test(maybeFn)) return `f${maybeFn}`;
+  }
+  return null;
+};
+
+const normalizeEventKeyToken = (key: string): string | null => {
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (lower === " ") return "space";
+  if (lower === "spacebar") return "space";
+  if (lower === "escape" || lower === "esc") return "escape";
+  if (lower === "enter" || lower === "return") return "enter";
+  if (lower === "tab") return "tab";
+  if (lower === "backspace") return "backspace";
+  if (lower === "arrowup") return "up";
+  if (lower === "arrowdown") return "down";
+  if (lower === "arrowleft") return "left";
+  if (lower === "arrowright") return "right";
+  if (lower.length === 1) return lower;
+  return lower;
+};
+
+const keyboardEventToShortcut = (event: KeyboardEvent): string | null => {
+  const tokens: string[] = [];
+  const hasFn = event.getModifierState?.("Fn") || event.key.toLowerCase() === "fn";
+  if (hasFn) tokens.push("fn");
+  if (event.ctrlKey) tokens.push("ctrl");
+  if (event.shiftKey) tokens.push("shift");
+  if (event.altKey) tokens.push("alt");
+  if (event.metaKey) tokens.push("meta");
+
+  const keyToken = normalizeEventCodeToken(event.code) || normalizeEventKeyToken(event.key);
+  if (keyToken && !MODIFIER_TOKENS.has(keyToken)) {
+    tokens.push(keyToken);
+  }
+
+  if (tokens.length === 0) return null;
+  return tokens.join("+");
 };
 
 const formatShortcutPart = (part: string) => {
   const key = part.trim().toLowerCase();
   if (key === "fn") return "fn";
+  if (key === "control") return "Ctrl";
   if (key === "ctrl") return "Ctrl";
+  if (key === "meta") return "Meta";
+  if (key === "command") return "Cmd";
   if (key === "cmd") return "Cmd";
+  if (key === "alt") return "Alt";
   if (key === "option") return "Option";
   if (key === "space") return "Space";
   if (key === "enter") return "Enter";
   if (key === "tab") return "Tab";
+  if (key === "escape") return "Esc";
+  if (key === "backspace") return "Backspace";
+  if (key === "up") return "Up";
+  if (key === "down") return "Down";
+  if (key === "left") return "Left";
+  if (key === "right") return "Right";
   return key.toUpperCase();
 };
 
@@ -115,14 +188,16 @@ const ShortcutRow = ({
 
 const ShortcutsModal = ({
   shortcuts,
-  onCycleShortcut,
+  onStartRecording,
+  recordingField,
   onResetDefaults,
   saving,
   error,
   onClose,
 }: {
   shortcuts: ShortcutSettings;
-  onCycleShortcut: (field: ShortcutKeyName) => void;
+  onStartRecording: (field: ShortcutKeyName) => void;
+  recordingField: ShortcutKeyName | null;
   onResetDefaults: () => void;
   saving: boolean;
   error?: string;
@@ -154,18 +229,32 @@ const ShortcutsModal = ({
           title="Push to talk"
           description="Hold to say something short"
           keys={shortcutToKeys(shortcuts.push_to_talk)}
-          actionLabel="Change"
-          onAction={() => onCycleShortcut("push_to_talk")}
+          actionLabel={recordingField === "push_to_talk" ? "Listening..." : "Record"}
+          onAction={() => onStartRecording("push_to_talk")}
           actionDisabled={saving}
         />
         <ShortcutRow
           title="Hands-free mode"
           description="Press to start and stop dictation"
           keys={shortcutToKeys(shortcuts.hands_free_toggle)}
-          actionLabel="Change"
-          onAction={() => onCycleShortcut("hands_free_toggle")}
+          actionLabel={recordingField === "hands_free_toggle" ? "Listening..." : "Record"}
+          onAction={() => onStartRecording("hands_free_toggle")}
           actionDisabled={saving}
         />
+        <ShortcutRow
+          title="Command mode"
+          description="Reserved for command actions"
+          keys={shortcutToKeys(shortcuts.command_mode)}
+          actionLabel={recordingField === "command_mode" ? "Listening..." : "Record"}
+          onAction={() => onStartRecording("command_mode")}
+          actionDisabled={saving}
+        />
+
+        {recordingField && (
+          <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-600">
+            Press your shortcut now. Press Esc to cancel.
+          </p>
+        )}
 
         {error && (
           <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
@@ -537,6 +626,7 @@ function Dashboard() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutError, setShortcutError] = useState<string>();
   const [savingShortcuts, setSavingShortcuts] = useState(false);
+  const [recordingShortcut, setRecordingShortcut] = useState<ShortcutKeyName | null>(null);
   
   // Real Data State
   const [analytics, setAnalytics] = useState<AnalyticsStats | null>(null);
@@ -698,36 +788,44 @@ function Dashboard() {
     }
   };
 
-  const cycleShortcut = (field: ShortcutKeyName) => {
-    const current = (settings?.shortcuts?.[field] || DEFAULT_SHORTCUTS[field]).toLowerCase();
-    const options = SHORTCUT_OPTIONS[field];
-    const currentIndex = options.findIndex((option) => option === current);
-    const conflictingValue =
-      field === "push_to_talk"
-        ? (settings?.shortcuts?.hands_free_toggle || DEFAULT_SHORTCUTS.hands_free_toggle).toLowerCase()
-        : field === "hands_free_toggle"
-          ? (settings?.shortcuts?.push_to_talk || DEFAULT_SHORTCUTS.push_to_talk).toLowerCase()
-          : undefined;
-
-    let nextValue = current;
-    for (let i = 0; i < options.length; i += 1) {
-      const candidate = options[(currentIndex + 1 + i + options.length) % options.length];
-      if (!conflictingValue || candidate !== conflictingValue) {
-        nextValue = candidate;
-        break;
-      }
-    }
-
-    const nextShortcuts: ShortcutSettings = {
-      ...(settings?.shortcuts ?? DEFAULT_SHORTCUTS),
-      [field]: nextValue,
-    };
-    void persistShortcuts(nextShortcuts);
+  const beginShortcutRecording = (field: ShortcutKeyName) => {
+    if (savingShortcuts) return;
+    setShortcutError(undefined);
+    setRecordingShortcut(field);
   };
 
   const resetShortcutsToDefault = () => {
     void persistShortcuts(DEFAULT_SHORTCUTS);
   };
+
+  useEffect(() => {
+    if (!shortcutsOpen || !recordingShortcut) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setRecordingShortcut(null);
+        return;
+      }
+
+      const recorded = keyboardEventToShortcut(event);
+      if (!recorded) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const nextShortcuts: ShortcutSettings = {
+        ...(settings?.shortcuts ?? DEFAULT_SHORTCUTS),
+        [recordingShortcut]: recorded,
+      };
+      void persistShortcuts(nextShortcuts);
+      setRecordingShortcut(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [shortcutsOpen, recordingShortcut, settings?.shortcuts]);
 
   const downloadedModels = models.filter((m) => m.downloaded);
   const activeModelInfo = models.find((m) => m.name === activeModel);
@@ -993,6 +1091,7 @@ function Dashboard() {
                           actionLabel="Change"
                           onAction={() => {
                             setShortcutError(undefined);
+                            setRecordingShortcut(null);
                             setShortcutsOpen(true);
                           }}
                         />
@@ -1132,11 +1231,15 @@ function Dashboard() {
             {shortcutsOpen && (
                 <ShortcutsModal
                   shortcuts={shortcuts}
-                  onCycleShortcut={cycleShortcut}
+                  onStartRecording={beginShortcutRecording}
+                  recordingField={recordingShortcut}
                   onResetDefaults={resetShortcutsToDefault}
                   saving={savingShortcuts}
                   error={shortcutError}
-                  onClose={() => setShortcutsOpen(false)}
+                  onClose={() => {
+                    setRecordingShortcut(null);
+                    setShortcutsOpen(false);
+                  }}
                 />
             )}
           </AnimatePresence>
