@@ -1377,11 +1377,13 @@ const JarvisWaveBars = ({ audioLevel }: { audioLevel: number }) => {
 };
 
 const FloatingPill = ({
+  visible,
   shouldRecord,
   status,
   error,
   onStop,
 }: {
+  visible: boolean;
   shouldRecord: boolean;
   status: TranscriptionStatus;
   error?: string;
@@ -1407,11 +1409,15 @@ const FloatingPill = ({
 
   return (
     <motion.div
-      initial={{ scale: 0.8, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      exit={{ scale: 0.96, opacity: 0 }}
-      transition={{ type: "spring", damping: 26, stiffness: 340, mass: 0.9 }}
+      initial={false}
+      animate={
+        visible
+          ? { scale: 1, opacity: 1, y: 0 }
+          : { scale: 0.98, opacity: 0, y: 10 }
+      }
+      transition={{ type: "spring", damping: 30, stiffness: 380, mass: 0.8 }}
       className="fixed bottom-2 left-1/2 z-[999999] -translate-x-1/2"
+      style={{ pointerEvents: visible ? "auto" : "none" }}
       onClick={() => {
         if (shouldRecord) onStop();
       }}
@@ -1442,12 +1448,15 @@ const FloatingPill = ({
 
 function DictationPillApp() {
   const HOLD_RELEASE_UI_DEBOUNCE_MS = 90;
+  const PILL_HIDE_DEBOUNCE_MS = 120;
   const [fnHeldRaw, setFnHeldRaw] = useState(false);
   const [fnHeld, setFnHeld] = useState(false);
+  const [showPill, setShowPill] = useState(false);
   const [sttStatus, setSttStatus] = useState<TranscriptionStatus>("idle");
   const [sttError, setSttError] = useState<string>();
   const previousFnHeld = useRef(false);
   const holdReleaseTimerRef = useRef<number | null>(null);
+  const hidePillTimerRef = useRef<number | null>(null);
   const { playStartSound, playStopSound } = useFeedbackSounds(true);
 
   useEffect(() => {
@@ -1473,6 +1482,31 @@ function DictationPillApp() {
       }
     };
   }, [fnHeldRaw]);
+
+  const shouldShowPill = fnHeld || sttStatus !== "idle";
+  useEffect(() => {
+    if (hidePillTimerRef.current !== null) {
+      window.clearTimeout(hidePillTimerRef.current);
+      hidePillTimerRef.current = null;
+    }
+
+    if (shouldShowPill) {
+      setShowPill(true);
+      return;
+    }
+
+    hidePillTimerRef.current = window.setTimeout(() => {
+      setShowPill(false);
+      hidePillTimerRef.current = null;
+    }, PILL_HIDE_DEBOUNCE_MS);
+
+    return () => {
+      if (hidePillTimerRef.current !== null) {
+        window.clearTimeout(hidePillTimerRef.current);
+        hidePillTimerRef.current = null;
+      }
+    };
+  }, [shouldShowPill]);
 
   useEffect(() => {
     let unlistenHold: (() => void) | undefined;
@@ -1533,8 +1567,6 @@ function DictationPillApp() {
     };
   }, []);
 
-  const showPill = fnHeld || sttStatus !== "idle";
-
   return (
     <div
       className="h-screen w-screen flex items-center justify-center overflow-visible bg-transparent"
@@ -1565,21 +1597,18 @@ function DictationPillApp() {
           }
         }
       `}</style>
-      <AnimatePresence>
-        {showPill && (
-          <FloatingPill
-            shouldRecord={fnHeld}
-            status={sttStatus}
-            error={sttError}
-            onStop={() => {
-              playStopSound();
-              setFnHeldRaw(false);
-              setFnHeld(false);
-              invoke("stop_recording").catch(console.error);
-            }}
-          />
-        )}
-      </AnimatePresence>
+      <FloatingPill
+        visible={showPill}
+        shouldRecord={fnHeld}
+        status={sttStatus}
+        error={sttError}
+        onStop={() => {
+          playStopSound();
+          setFnHeldRaw(false);
+          setFnHeld(false);
+          invoke("stop_recording").catch(console.error);
+        }}
+      />
     </div>
   );
 }
