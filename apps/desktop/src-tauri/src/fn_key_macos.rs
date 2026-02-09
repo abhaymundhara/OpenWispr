@@ -4,8 +4,8 @@ use crate::audio::{self, AudioCapture};
 use crate::store::ShortcutSpec;
 use objc2_core_foundation::{kCFRunLoopDefaultMode, CFMachPort, CFRunLoop};
 use objc2_core_graphics::{
-    CGEvent, CGEventField, CGEventFlags, CGEventTapLocation, CGEventTapOptions,
-    CGEventTapPlacement, CGEventTapProxy, CGEventType,
+    CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
+    CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy, CGEventType,
 };
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Wry};
 
 static TASK_HANDLE: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
+const FN_KEYCODE: u16 = 63;
 
 struct FnHoldState {
     app: AppHandle<Wry>,
@@ -24,6 +25,7 @@ struct FnHoldState {
     meta_down: bool,
     pressed_keys: HashSet<String>,
     keycode_tokens: HashMap<i64, String>,
+    fn_hardware_supported: bool,
     is_push_active: bool,
     is_hands_free: bool,
     is_recording_active: bool,
@@ -200,18 +202,26 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
     let flags = CGEvent::flags(Some(event_ref));
     update_non_fn_modifier_state_from_flags(state, flags);
 
-    if event_type == CGEventType::FlagsChanged {
+    let hardware_fn_down =
+        CGEventSource::key_state(CGEventSourceStateID::HIDSystemState, FN_KEYCODE);
+    if hardware_fn_down {
+        state.fn_hardware_supported = true;
+    }
+    if state.fn_hardware_supported {
+        state.fn_down = hardware_fn_down;
+    } else if event_type == CGEventType::FlagsChanged {
         let keycode =
             CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
         // Only trust Fn state when the actual Fn key emits a FlagsChanged event.
         // This avoids false positives from special keys (e.g. dictation/mic).
-        if keycode == 63 {
+        if keycode == i64::from(FN_KEYCODE) {
             state.fn_down = flags.contains(CGEventFlags::MaskSecondaryFn);
         }
     }
 
     if event_type == CGEventType::KeyDown || event_type == CGEventType::KeyUp {
-        let keycode = CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
+        let keycode =
+            CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
         if event_type == CGEventType::KeyDown {
             if let Some(token) = key_token_from_event(event_ref) {
                 state.keycode_tokens.insert(keycode, token.clone());
@@ -259,6 +269,7 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
             meta_down: false,
             pressed_keys: HashSet::new(),
             keycode_tokens: HashMap::new(),
+            fn_hardware_supported: false,
             is_push_active: false,
             is_hands_free: false,
             is_recording_active: false,

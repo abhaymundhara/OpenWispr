@@ -1,10 +1,10 @@
 use serde::Serialize;
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::Manager;
 use stt::{
     create_adapter, is_mlx_model_name, is_sherpa_model_name, set_model_download_progress_handler,
     ModelDownloadProgress, SttConfig, MLX_PARAKEET_V2_MODEL, SHERPA_PARAKEET_INT8_MODEL,
 };
+use tauri::Manager;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelInfo {
@@ -27,10 +27,7 @@ struct ModelDownloadProgressEvent {
     message: Option<String>,
 }
 
-fn emit_model_download_progress_event(
-    app: &tauri::AppHandle,
-    payload: ModelDownloadProgressEvent,
-) {
+fn emit_model_download_progress_event(app: &tauri::AppHandle, payload: ModelDownloadProgressEvent) {
     let _ = app.emit_all("model-download-progress", payload);
 }
 
@@ -168,8 +165,7 @@ pub async fn download_model(app: tauri::AppHandle, model: String) -> Result<(), 
                         done: true,
                         error: None,
                         message: Some(
-                            "Model files downloaded. It will initialize when selected."
-                                .to_string(),
+                            "Model files downloaded. It will initialize when selected.".to_string(),
                         ),
                     },
                 );

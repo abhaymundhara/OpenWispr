@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
 
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Analytics {
     pub lifetime_removed_sec: f64, // "lifetime saved"
@@ -181,12 +180,13 @@ pub fn init_store(app: &AppHandle) {
     } else {
         AppStore::default()
     };
-    
+
     let _ = STORE.set(Mutex::new(store));
 }
 
 pub fn get_store() -> AppStore {
-    STORE.get()
+    STORE
+        .get()
         .map(|s| s.lock().unwrap().clone())
         .unwrap_or_default()
 }
@@ -196,9 +196,12 @@ pub fn save_store(app: &AppHandle, store: &AppStore) {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::write(path, serde_json::to_string_pretty(store).unwrap_or_default());
+        let _ = fs::write(
+            path,
+            serde_json::to_string_pretty(store).unwrap_or_default(),
+        );
     }
-    
+
     // Update memory
     if let Some(guard) = STORE.get() {
         if let Ok(mut lock) = guard.lock() {
@@ -209,7 +212,7 @@ pub fn save_store(app: &AppHandle, store: &AppStore) {
 
 pub fn update_analytics(app: &AppHandle, duration_sec: f64, word_count: u64) {
     let mut store = get_store();
-    
+
     // Update totals
     store.analytics.total_words += word_count;
     store.analytics.total_seconds += duration_sec;
@@ -220,12 +223,12 @@ pub fn update_analytics(app: &AppHandle, duration_sec: f64, word_count: u64) {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     if let Some(last) = &store.analytics.last_session_date {
         if last != &today {
-            // If last was yesterday, increment. 
+            // If last was yesterday, increment.
             // Simplified: just check if it's a new day. Real streak requires checking consecutive days.
             // For MVP, if last != today, we check if it was yesterday.
             let last_date = chrono::NaiveDate::parse_from_str(last, "%Y-%m-%d").ok();
             let today_date = chrono::NaiveDate::parse_from_str(&today, "%Y-%m-%d").ok();
-            
+
             if let (Some(l), Some(t)) = (last_date, today_date) {
                 if t.signed_duration_since(l).num_days() == 1 {
                     store.analytics.day_streak += 1;
@@ -234,14 +237,14 @@ pub fn update_analytics(app: &AppHandle, duration_sec: f64, word_count: u64) {
                 }
                 // If 0 days (same day), do nothing to streak
             } else {
-                 store.analytics.day_streak = 1;
+                store.analytics.day_streak = 1;
             }
         }
     } else {
         store.analytics.day_streak = 1;
     }
     store.analytics.last_session_date = Some(today);
-    
+
     save_store(app, &store);
     let _ = app.emit_all("analytics-update", &store.analytics);
 }
@@ -276,12 +279,7 @@ pub fn set_language(app: AppHandle, language: String) {
 }
 
 #[tauri::command]
-pub fn set_llm_settings(
-    app: AppHandle,
-    provider: String,
-    base_url: String,
-    model: String,
-) {
+pub fn set_llm_settings(app: AppHandle, provider: String, base_url: String, model: String) {
     let mut store = get_store();
     store.settings.llm_provider = Some(provider);
     store.settings.ollama_base_url = Some(base_url);

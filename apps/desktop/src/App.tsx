@@ -1441,17 +1441,38 @@ const FloatingPill = ({
 };
 
 function DictationPillApp() {
+  const HOLD_RELEASE_UI_DEBOUNCE_MS = 90;
+  const [fnHeldRaw, setFnHeldRaw] = useState(false);
   const [fnHeld, setFnHeld] = useState(false);
   const [sttStatus, setSttStatus] = useState<TranscriptionStatus>("idle");
   const [sttError, setSttError] = useState<string>();
   const previousFnHeld = useRef(false);
-  const fnHeldRef = useRef(false);
+  const holdReleaseTimerRef = useRef<number | null>(null);
   const { playStartSound, playStopSound } = useFeedbackSounds(true);
 
-  // Keep ref in sync with state
   useEffect(() => {
-    fnHeldRef.current = fnHeld;
-  }, [fnHeld]);
+    if (holdReleaseTimerRef.current !== null) {
+      window.clearTimeout(holdReleaseTimerRef.current);
+      holdReleaseTimerRef.current = null;
+    }
+
+    if (fnHeldRaw) {
+      setFnHeld(true);
+      return;
+    }
+
+    holdReleaseTimerRef.current = window.setTimeout(() => {
+      setFnHeld(false);
+      holdReleaseTimerRef.current = null;
+    }, HOLD_RELEASE_UI_DEBOUNCE_MS);
+
+    return () => {
+      if (holdReleaseTimerRef.current !== null) {
+        window.clearTimeout(holdReleaseTimerRef.current);
+        holdReleaseTimerRef.current = null;
+      }
+    };
+  }, [fnHeldRaw]);
 
   useEffect(() => {
     let unlistenHold: (() => void) | undefined;
@@ -1460,7 +1481,7 @@ function DictationPillApp() {
     const setupListener = async () => {
       try {
         unlistenHold = await listen<boolean>("fn-hold", (event) => {
-          setFnHeld(event.payload);
+          setFnHeldRaw(event.payload);
         });
         unlistenStatus = await listen<TranscriptionStatusEvent>(
           "transcription-status",
@@ -1552,6 +1573,7 @@ function DictationPillApp() {
             error={sttError}
             onStop={() => {
               playStopSound();
+              setFnHeldRaw(false);
               setFnHeld(false);
               invoke("stop_recording").catch(console.error);
             }}

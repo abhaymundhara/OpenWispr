@@ -10,21 +10,20 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Wry};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Input::{
-    GetRawInputData, RegisterRawInputDevices, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER,
-    RAWKEYBOARD, RID_INPUT, RIDEV_INPUTSINK, RIM_TYPEKEYBOARD,
-};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     VK_0, VK_9, VK_A, VK_BACK, VK_CAPITAL, VK_CONTROL, VK_ESCAPE, VK_F1, VK_F12, VK_F22, VK_F23,
     VK_F24, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_OEM_1, VK_OEM_2, VK_OEM_3,
-    VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_COMMA, VK_OEM_MINUS, VK_OEM_PERIOD,
-    VK_OEM_PLUS, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_SPACE,
-    VK_TAB,
+    VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_COMMA, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS,
+    VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB,
+};
+use windows_sys::Win32::UI::Input::{
+    GetRawInputData, RegisterRawInputDevices, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER,
+    RAWKEYBOARD, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEKEYBOARD,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA,
-    GetMessageW, MSG, PostQuitMessage, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
-    WM_CREATE, WM_DESTROY, WM_INPUT, WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
+    RegisterClassW, SetWindowLongPtrW, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT,
+    GWLP_USERDATA, MSG, WM_CREATE, WM_DESTROY, WM_INPUT, WNDCLASSW,
 };
 
 /// Keyboard flag indicating key release. Not exported by windows-sys.
@@ -194,10 +193,8 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_INPUT => {
-            let state_ptr = windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(
-                hwnd,
-                GWLP_USERDATA,
-            );
+            let state_ptr =
+                windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             if state_ptr != 0 {
                 handle_raw_input(lparam, &mut *(state_ptr as *mut FnHoldState));
             }

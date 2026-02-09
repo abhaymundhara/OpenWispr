@@ -8,16 +8,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(target_os = "macos")]
 use tauri::ActivationPolicy;
-use tauri::{Manager, RunEvent, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, CustomMenuItem, Wry};
+use tauri::{
+    CustomMenuItem, Manager, RunEvent, SystemTray, SystemTrayEvent, SystemTrayMenu,
+    SystemTrayMenuItem, Wry,
+};
 
 mod audio;
 #[cfg(target_os = "macos")]
 mod fn_key_macos;
 #[cfg(target_os = "windows")]
 mod fn_key_windows;
+mod llm_client;
 mod models;
 mod store;
-mod llm_client;
 use audio::AudioCapture;
 use store::init_store;
 
@@ -83,12 +86,12 @@ pub(crate) fn show_main_overlay_window(app_handle: &tauri::AppHandle<Wry>) {
 fn main() {
     let dashboard = CustomMenuItem::new("dashboard".to_string(), "Dashboard");
     let quit = CustomMenuItem::new("quit".to_string(), "Quit");
-    
+
     let tray_menu = SystemTrayMenu::new()
         .add_item(dashboard)
         .add_native_item(SystemTrayMenuItem::Separator)
         .add_item(quit);
-    
+
     let mut tray = SystemTray::new().with_menu(tray_menu);
     #[cfg(target_os = "macos")]
     {
@@ -98,17 +101,15 @@ fn main() {
     let app = tauri::Builder::default()
         .system_tray(tray)
         .on_system_tray_event(|app_handle, event| match event {
-            SystemTrayEvent::MenuItemClick { id, .. } => {
-                match id.as_str() {
-                    "dashboard" => {
-                        show_models_window(app_handle);
-                    }
-                    "quit" => {
-                        app_handle.exit(0);
-                    }
-                    _ => {}
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                "dashboard" => {
+                    show_models_window(app_handle);
                 }
-            }
+                "quit" => {
+                    app_handle.exit(0);
+                }
+                _ => {}
+            },
             _ => {}
         })
         .setup(|app| {
@@ -123,7 +124,7 @@ fn main() {
                 {
                     use cocoa::appkit::NSWindow;
                     use cocoa::base::id;
-                    
+
                     let ns_window = main_window.ns_window().unwrap() as id;
                     unsafe {
                         ns_window.setHasShadow_(cocoa::base::NO);
@@ -242,7 +243,10 @@ fn main() {
             ..
         } if label == "models" || label == "main" => {
             if verbose_logs_enabled() {
-                println!("[lifecycle] close requested for window '{}' - hiding", label);
+                println!(
+                    "[lifecycle] close requested for window '{}' - hiding",
+                    label
+                );
             }
             api.prevent_close();
             if let Some(window) = app_handle.get_window(&label) {

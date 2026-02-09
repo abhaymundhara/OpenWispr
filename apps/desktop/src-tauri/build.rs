@@ -14,10 +14,14 @@ fn main() {
             println!("cargo:warning=Hardware acceleration (Vulkan) detected and enabled.");
         } else {
             if !has_clang {
-                println!("cargo:warning=LLVM/Clang not found. Hardware acceleration will be disabled.");
+                println!(
+                    "cargo:warning=LLVM/Clang not found. Hardware acceleration will be disabled."
+                );
             }
             if !has_vulkan {
-                println!("cargo:warning=Vulkan SDK not found. Hardware acceleration will be disabled.");
+                println!(
+                    "cargo:warning=Vulkan SDK not found. Hardware acceleration will be disabled."
+                );
             }
             println!("cargo:warning=Building in CPU-only mode for maximum compatibility.");
         }

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ pub async fn get_ollama_models(base_url: String) -> Result<Vec<OllamaModel>, Str
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| format!("Failed to build client: {}", e))?;
-    
+
     // Ensure URL has protocol
     let url = if base_url.starts_with("http") {
         base_url

@@ -227,7 +227,10 @@ pub fn remember_active_paste_target() {
 
 #[cfg(target_os = "macos")]
 fn restore_active_paste_target() {
-    let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
+    let target = paste_target_slot()
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone());
     let Some(target) = target else {
         if verbose_logs_enabled() {
             eprintln!("[paste] no captured app to restore on macOS");
@@ -313,7 +316,10 @@ fn capture_clipboard(clipboard: &mut Clipboard) -> ClipboardSnapshot {
     ClipboardSnapshot::Clear
 }
 
-fn restore_clipboard(clipboard: &mut Clipboard, snapshot: &ClipboardSnapshot) -> Result<(), String> {
+fn restore_clipboard(
+    clipboard: &mut Clipboard,
+    snapshot: &ClipboardSnapshot,
+) -> Result<(), String> {
     match snapshot {
         ClipboardSnapshot::Html { html, alt_text } => clipboard
             .set()
@@ -363,10 +369,7 @@ fn restore_clipboard_with_retry(snapshot: ClipboardSnapshot) {
             Ok(_) => return,
             Err(err) => {
                 if verbose_logs_enabled() {
-                    eprintln!(
-                        "[paste] restore attempt {} failed: {}",
-                        attempt, err
-                    );
+                    eprintln!("[paste] restore attempt {} failed: {}", attempt, err);
                 }
             }
         }
@@ -410,7 +413,10 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
         Ok(clipboard) => clipboard,
         Err(err) => {
             if verbose_logs_enabled() {
-                eprintln!("[paste] clipboard unavailable, falling back to direct typing: {}", err);
+                eprintln!(
+                    "[paste] clipboard unavailable, falling back to direct typing: {}",
+                    err
+                );
             }
             restore_active_paste_target();
             insert_text_directly(text);
@@ -433,7 +439,10 @@ fn paste_text_preserving_clipboard(text: &str) -> Result<(), String> {
     let mut paste_done = false;
     #[cfg(target_os = "macos")]
     {
-        let target = paste_target_slot().lock().ok().and_then(|slot| slot.clone());
+        let target = paste_target_slot()
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
         if let Some(target) = target {
             let script = format!(
                 r#"tell application "System Events"
@@ -444,10 +453,7 @@ end tell"#,
                 target.pid
             );
 
-            let result = Command::new("osascript")
-                .arg("-e")
-                .arg(&script)
-                .status();
+            let result = Command::new("osascript").arg("-e").arg(&script).status();
 
             if result.as_ref().is_ok_and(|status| status.success()) {
                 paste_done = true;
@@ -490,18 +496,18 @@ fn calculate_rms(samples: &[f32]) -> f32 {
 fn select_input_device(host: &Host) -> Result<Device, String> {
     // 1. Check persistent store
     if let Some(preferred_id) = crate::store::get_input_device_id() {
-         if let Ok(devices) = host.input_devices() {
-             for device in devices {
-                 if let Ok(name) = device.name() {
-                     if name == preferred_id {
-                         if verbose_logs_enabled() {
-                             println!("[audio] selected input device from store: {}", name);
-                         }
-                         return Ok(device);
-                     }
-                 }
-             }
-         }
+        if let Ok(devices) = host.input_devices() {
+            for device in devices {
+                if let Ok(name) = device.name() {
+                    if name == preferred_id {
+                        if verbose_logs_enabled() {
+                            println!("[audio] selected input device from store: {}", name);
+                        }
+                        return Ok(device);
+                    }
+                }
+            }
+        }
     }
 
     if let Ok(requested) = std::env::var("OPENWISPR_INPUT_DEVICE") {
@@ -568,16 +574,14 @@ fn resolve_ffmpeg_binary() -> Option<String> {
         }
     }
 
-    let resolved = ffmpeg_binary_candidates()
-        .iter()
-        .find_map(|candidate| {
-            Command::new(candidate)
-                .arg("-version")
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .map(|_| (*candidate).to_string())
-        });
+    let resolved = ffmpeg_binary_candidates().iter().find_map(|candidate| {
+        Command::new(candidate)
+            .arg("-version")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|_| (*candidate).to_string())
+    });
     let _ = FFMPEG_BIN.set(resolved.clone());
     resolved
 }
@@ -883,7 +887,10 @@ pub async fn stop_recording_for_capture(
         *adapter_guard = Some(adapter);
         *loaded_model_guard = Some(target_model.clone());
         if verbose_logs_enabled() {
-            println!("[stt] adapter initialized successfully for model: {}", target_model);
+            println!(
+                "[stt] adapter initialized successfully for model: {}",
+                target_model
+            );
         }
     } else if verbose_logs_enabled() {
         println!("[stt] reusing existing adapter for model: {}", target_model);
@@ -910,7 +917,10 @@ pub async fn stop_recording_for_capture(
         }
         Err(err) => {
             if verbose_logs_enabled() {
-                eprintln!("[stt] ffmpeg normalization unavailable, using raw capture: {}", err);
+                eprintln!(
+                    "[stt] ffmpeg normalization unavailable, using raw capture: {}",
+                    err
+                );
             }
             (audio_data, format)
         }
@@ -952,15 +962,18 @@ pub async fn stop_recording_for_capture(
 
             // Paste synchronously BEFORE emitting events to ensure it completes
             if verbose_logs_enabled() {
-                println!("[paste] attempting to paste {} chars to active window", result.text.chars().count());
+                println!(
+                    "[paste] attempting to paste {} chars to active window",
+                    result.text.chars().count()
+                );
             }
-            
+
             if let Err(err) = paste_text_preserving_clipboard(&result.text) {
                 eprintln!("[paste] ERROR failed to paste text: {}", err);
             } else if verbose_logs_enabled() {
                 println!("[paste] paste completed successfully");
             }
-            
+
             // Now emit result to UI
             let _ = app.emit_all(
                 "transcription-result",
@@ -971,14 +984,14 @@ pub async fn stop_recording_for_capture(
                     is_final: true,
                 },
             );
-            
+
             // Set idle status
             emit_transcription_status(&app, "idle", None);
-            
+
             if verbose_logs_enabled() {
                 println!("[stt] transcription cycle complete, ready for next run");
             }
-            
+
             Ok(())
         }
         Err(err) => {
@@ -1014,7 +1027,10 @@ pub fn list_input_devices() -> Result<Vec<AudioDevice>, String> {
     let mut result = Vec::new();
     for device in devices {
         if let Ok(name) = device.name() {
-             result.push(AudioDevice { id: name.clone(), name });
+            result.push(AudioDevice {
+                id: name.clone(),
+                name,
+            });
         }
     }
     Ok(result)
