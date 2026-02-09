@@ -122,9 +122,9 @@ fn is_shortcut_active(spec: &ShortcutSpec, state: &FnHoldState) -> bool {
         return false;
     }
     if let Some(key) = &spec.key {
-        return state.pressed_keys.contains(key);
+        return state.pressed_keys.len() == 1 && state.pressed_keys.contains(key);
     }
-    true
+    state.pressed_keys.is_empty()
 }
 
 fn key_token_from_keycode(keycode: i64) -> Option<String> {
