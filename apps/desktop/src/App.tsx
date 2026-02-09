@@ -350,9 +350,6 @@ function Dashboard() {
               <p className="text-[2rem] font-semibold leading-none tracking-tight">
                 OpenWispr
               </p>
-              <span className="rounded-md border border-white/25 px-2 py-0.5 text-[0.9rem] text-white/78">
-                Local
-              </span>
             </div>
           </div>
 
