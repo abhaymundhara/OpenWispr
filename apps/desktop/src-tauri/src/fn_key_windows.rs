@@ -1,32 +1,39 @@
 #![cfg(target_os = "windows")]
 
+use crate::audio::{self, AudioCapture};
 use std::ffi::c_void;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr::null_mut;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Wry};
-use crate::audio::{self, AudioCapture};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::{
     GetRawInputData, RegisterRawInputDevices, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER,
     RAWKEYBOARD, RID_INPUT, RIDEV_INPUTSINK, RIM_TYPEKEYBOARD,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_F22, VK_F23, VK_F24};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    VK_F22, VK_F23, VK_F24, VK_RETURN, VK_SPACE, VK_TAB,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
-    RegisterClassW, SetWindowLongPtrW, TranslateMessage, CREATESTRUCTW, CW_USEDEFAULT, GWLP_USERDATA,
-    MSG, WM_CREATE, WM_DESTROY, WM_INPUT, WNDCLASSW,
+    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DispatchMessageW, GWLP_USERDATA,
+    GetMessageW, MSG, PostQuitMessage, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
+    WM_CREATE, WM_DESTROY, WM_INPUT, WNDCLASSW,
 };
 
 /// Keyboard flag indicating key release. Not exported by windows-sys.
 const RI_KEY_BREAK: u16 = 1;
 
+static TASK_HANDLE: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
+
 struct FnHoldState {
     app: AppHandle<Wry>,
     fn_is_down: bool,
-    ctrl_is_down: bool,
-    shift_is_down: bool,
-    recording_active: bool,
+    is_push_key_down: bool,
+    is_push_active: bool,
+    is_hands_free: bool,
+    is_recording_active: bool,
+    hold_emitted: bool,
     debug: bool,
     vkey_override: Option<u16>,
     makecode_override: Option<u16>,
@@ -36,6 +43,88 @@ fn wide(s: &str) -> Vec<u16> {
     let mut v: Vec<u16> = s.encode_utf16().collect();
     v.push(0);
     v
+}
+
+fn hands_free_toggle_vkey(shortcut: &str) -> u16 {
+    match crate::store::normalize_shortcut(shortcut).as_str() {
+        "fn+enter" => VK_RETURN as u16,
+        "fn+tab" => VK_TAB as u16,
+        _ => VK_SPACE as u16, // fn+space
+    }
+}
+
+fn push_to_talk_vkey(shortcut: &str) -> Option<u16> {
+    match crate::store::normalize_shortcut(shortcut).as_str() {
+        "fn+enter" => Some(VK_RETURN as u16),
+        "fn+tab" => Some(VK_TAB as u16),
+        _ => None, // fn (no secondary key)
+    }
+}
+
+fn start_capture(state: &FnHoldState) -> Result<(), String> {
+    let capture = state.app.state::<AudioCapture>().inner().clone();
+    let app_handle = state.app.clone();
+    audio::remember_active_paste_target();
+    crate::show_main_overlay_window(&state.app);
+    audio::start_recording_for_capture(&capture, app_handle)
+}
+
+fn stop_capture(state: &FnHoldState) {
+    let capture = state.app.state::<AudioCapture>().inner().clone();
+    let app_handle = state.app.clone();
+    let handle = tauri::async_runtime::spawn(async move {
+        if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
+            eprintln!("Failed to stop recording: {}", err);
+        }
+    });
+    if let Ok(mut task) = TASK_HANDLE.lock() {
+        *task = Some(handle);
+    }
+}
+
+fn sync_hold_signal(state: &mut FnHoldState) {
+    let should_emit_hold = state.is_hands_free || state.is_push_active;
+    if should_emit_hold != state.hold_emitted {
+        state.hold_emitted = should_emit_hold;
+        let _ = state.app.emit_all("fn-hold", should_emit_hold);
+    }
+}
+
+fn recompute_push_active(state: &mut FnHoldState, push_key_vkey: Option<u16>) {
+    let should_push_active = if state.is_hands_free {
+        false
+    } else {
+        match push_key_vkey {
+            Some(_) => state.fn_is_down && state.is_push_key_down,
+            None => state.fn_is_down,
+        }
+    };
+    state.is_push_active = should_push_active;
+}
+
+fn sync_recording(state: &mut FnHoldState) {
+    let should_record = state.is_hands_free || state.is_push_active;
+    if should_record == state.is_recording_active {
+        return;
+    }
+
+    if should_record {
+        match start_capture(state) {
+            Ok(_) => {
+                state.is_recording_active = true;
+            }
+            Err(err) if err == "Already recording" => {
+                state.is_recording_active = true;
+            }
+            Err(err) => {
+                eprintln!("Failed to start recording: {}", err);
+                state.is_recording_active = false;
+            }
+        }
+    } else {
+        stop_capture(state);
+        state.is_recording_active = false;
+    }
 }
 
 unsafe extern "system" fn wnd_proc(
@@ -75,13 +164,7 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
     let mut size: u32 = 0;
     let header_size = size_of::<RAWINPUTHEADER>() as u32;
     let hrawinput = lparam as *mut c_void;
-    let res = GetRawInputData(
-        hrawinput,
-        RID_INPUT,
-        null_mut(),
-        &mut size,
-        header_size,
-    );
+    let res = GetRawInputData(hrawinput, RID_INPUT, null_mut(), &mut size, header_size);
     if res == u32::MAX || size == 0 {
         return;
     }
@@ -110,77 +193,43 @@ unsafe fn handle_raw_input(lparam: LPARAM, state: &mut FnHoldState) {
     let is_break = (flags & RI_KEY_BREAK) != 0;
     let is_down = !is_break;
 
-    // Always show key presses for debugging
-    println!(
-        "⚙️  Key: vkey=0x{:02X} make=0x{:02X} {}",
-        vkey, makecode, if is_down { "DOWN" } else { "UP" }
-    );
+    if state.debug {
+        println!(
+            "key vkey=0x{:02X} make=0x{:02X} {}",
+            vkey,
+            makecode,
+            if is_down { "DOWN" } else { "UP" }
+        );
+    }
 
-    // Track Fn key state
+    let push_key_vkey = push_to_talk_vkey(&crate::store::push_to_talk_shortcut());
+    let hands_free_vkey = hands_free_toggle_vkey(&crate::store::hands_free_toggle_shortcut());
+
     if is_fn_key(vkey, makecode, state) {
-        if state.fn_is_down != is_down {
-            state.fn_is_down = is_down;
-            eprintln!("✨ Fn key: {}", if is_down { "DOWN" } else { "UP" });
+        state.fn_is_down = is_down;
+        if !state.fn_is_down {
+            state.is_push_key_down = false;
         }
     }
 
-    // Track Ctrl key state (generic or left/right specific)
-    const VK_CONTROL: u16 = 0x11;  // Generic Ctrl
-    const VK_LCONTROL: u16 = 0xA2;
-    const VK_RCONTROL: u16 = 0xA3;
-    if vkey == VK_CONTROL || vkey == VK_LCONTROL || vkey == VK_RCONTROL {
-        if state.ctrl_is_down != is_down {
-            state.ctrl_is_down = is_down;
-            eprintln!("⌨️  Ctrl key: {}", if is_down { "DOWN" } else { "UP" });
+    if let Some(push_key_vkey) = push_key_vkey {
+        if vkey == push_key_vkey {
+            state.is_push_key_down = is_down;
         }
     }
 
-    // Track Shift key state (generic or left/right specific)
-    const VK_SHIFT: u16 = 0x10;  // Generic Shift
-    const VK_LSHIFT: u16 = 0xA0;
-    const VK_RSHIFT: u16 = 0xA1;
-    if vkey == VK_SHIFT || vkey == VK_LSHIFT || vkey == VK_RSHIFT {
-        if state.shift_is_down != is_down {
-            state.shift_is_down = is_down;
-            eprintln!("⇧  Shift key: {}", if is_down { "DOWN" } else { "UP" });
-        }
-    }
-
-    // Check if Ctrl+Shift are pressed
-    let trigger_keys_pressed = state.ctrl_is_down && state.shift_is_down;
-    
-    if trigger_keys_pressed && !state.recording_active {
-        // Start recording
-        eprintln!("🎯 Ctrl+Shift pressed - starting recording...");
-        state.recording_active = true;
-        
-        let _ = state.app.emit_all("fn-hold", true);
-        audio::remember_active_paste_target();
-        crate::show_main_overlay_window(&state.app);
-        
-        let capture = state.app.state::<AudioCapture>().inner().clone();
-        let app_handle = state.app.clone();
-        if let Err(err) = audio::start_recording_for_capture(&capture, app_handle) {
-            eprintln!("❌ Failed to start recording: {}", err);
+    if is_down && vkey == hands_free_vkey && state.fn_is_down {
+        state.is_hands_free = !state.is_hands_free;
+        if state.is_hands_free {
+            println!("[Shortcuts] Hands-free mode ACTIVATED");
         } else {
-            eprintln!("✅ Recording started");
+            println!("[Shortcuts] Hands-free mode DEACTIVATED");
         }
-    } else if !trigger_keys_pressed && state.recording_active {
-        // Stop recording
-        eprintln!("🛑 Ctrl+Shift released - stopping recording...");
-        state.recording_active = false;
-        
-        let _ = state.app.emit_all("fn-hold", false);
-        let capture = state.app.state::<AudioCapture>().inner().clone();
-        let app_handle = state.app.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
-                eprintln!("❌ Failed to stop recording: {}", err);
-            } else {
-                eprintln!("✅ Recording stopped");
-            }
-        });
     }
+
+    recompute_push_active(state, push_key_vkey);
+    sync_recording(state);
+    sync_hold_signal(state);
 }
 
 fn is_fn_key(vkey: u16, makecode: u16, state: &FnHoldState) -> bool {
@@ -209,9 +258,11 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
         let state = Box::new(FnHoldState {
             app,
             fn_is_down: false,
-            ctrl_is_down: false,
-            shift_is_down: false,
-            recording_active: false,
+            is_push_key_down: false,
+            is_push_active: false,
+            is_hands_free: false,
+            is_recording_active: false,
+            hold_emitted: false,
             debug: std::env::var("OPENWISPR_RAWINPUT_DEBUG").ok().as_deref() == Some("1"),
             vkey_override: parse_env_hex_u16("OPENWISPR_FN_VKEY"),
             makecode_override: parse_env_hex_u16("OPENWISPR_FN_MAKECODE"),
@@ -251,13 +302,19 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
             eprintln!("Failed to create Raw Input window.");
             return;
         }
+
         let rid = RAWINPUTDEVICE {
             usUsagePage: 0x01,
             usUsage: 0x06,
             dwFlags: RIDEV_INPUTSINK,
             hwndTarget: hwnd,
         };
-        if RegisterRawInputDevices(&rid as *const RAWINPUTDEVICE, 1, size_of::<RAWINPUTDEVICE>() as u32) == 0 {
+        if RegisterRawInputDevices(
+            &rid as *const RAWINPUTDEVICE,
+            1,
+            size_of::<RAWINPUTDEVICE>() as u32,
+        ) == 0
+        {
             eprintln!("RegisterRawInputDevices failed.");
             return;
         }

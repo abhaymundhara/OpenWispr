@@ -16,7 +16,93 @@ static TASK_HANDLE: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex:
 struct FnHoldState {
     app: AppHandle<Wry>,
     is_fn_down: bool,
+    is_push_key_down: bool,
+    is_push_active: bool,
     is_hands_free: bool,
+    is_recording_active: bool,
+    hold_emitted: bool,
+}
+
+fn hands_free_keycode(shortcut: &str) -> i64 {
+    match crate::store::normalize_shortcut(shortcut).as_str() {
+        "fn+enter" => 36,
+        "fn+tab" => 48,
+        _ => 49, // fn+space
+    }
+}
+
+fn push_to_talk_keycode(shortcut: &str) -> Option<i64> {
+    match crate::store::normalize_shortcut(shortcut).as_str() {
+        "fn+enter" => Some(36),
+        "fn+tab" => Some(48),
+        _ => None,
+    }
+}
+
+fn start_capture(state: &FnHoldState) -> Result<(), String> {
+    let capture = state.app.state::<AudioCapture>().inner().clone();
+    let app_handle = state.app.clone();
+    audio::remember_active_paste_target();
+    crate::show_main_overlay_window(&state.app);
+    audio::start_recording_for_capture(&capture, app_handle)
+}
+
+fn stop_capture(state: &FnHoldState) {
+    let capture = state.app.state::<AudioCapture>().inner().clone();
+    let app_handle = state.app.clone();
+    let handle = tauri::async_runtime::spawn(async move {
+        if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
+            eprintln!("Failed to stop recording: {}", err);
+        }
+    });
+    if let Ok(mut task) = TASK_HANDLE.lock() {
+        *task = Some(handle);
+    }
+}
+
+fn sync_hold_signal(state: &mut FnHoldState) {
+    let should_emit_hold = state.is_hands_free || state.is_push_active;
+    if should_emit_hold != state.hold_emitted {
+        state.hold_emitted = should_emit_hold;
+        let _ = state.app.emit_all("fn-hold", should_emit_hold);
+    }
+}
+
+fn recompute_push_active(state: &mut FnHoldState, push_keycode: Option<i64>) {
+    let should_push_active = if state.is_hands_free {
+        false
+    } else {
+        match push_keycode {
+            Some(_) => state.is_fn_down && state.is_push_key_down,
+            None => state.is_fn_down,
+        }
+    };
+    state.is_push_active = should_push_active;
+}
+
+fn sync_recording(state: &mut FnHoldState) {
+    let should_record = state.is_hands_free || state.is_push_active;
+    if should_record == state.is_recording_active {
+        return;
+    }
+
+    if should_record {
+        match start_capture(state) {
+            Ok(_) => {
+                state.is_recording_active = true;
+            }
+            Err(err) if err == "Already recording" => {
+                state.is_recording_active = true;
+            }
+            Err(err) => {
+                eprintln!("Failed to start recording: {}", err);
+                state.is_recording_active = false;
+            }
+        }
+    } else {
+        stop_capture(state);
+        state.is_recording_active = false;
+    }
 }
 
 unsafe extern "C-unwind" fn fn_event_tap_callback(
@@ -32,6 +118,9 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
     let state = &mut *(user_info as *mut FnHoldState);
     let event_ref = event.as_ref();
 
+    let push_keycode = push_to_talk_keycode(&crate::store::push_to_talk_shortcut());
+    let hands_free_toggle_keycode = hands_free_keycode(&crate::store::hands_free_toggle_shortcut());
+
     // 1. Handle Fn Key (FlagsChanged)
     if event_type == CGEventType::FlagsChanged {
         let flags = CGEvent::flags(Some(event_ref));
@@ -39,79 +128,39 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
 
         if is_fn_down != state.is_fn_down {
             state.is_fn_down = is_fn_down;
-            let _ = state.app.emit_all("fn-hold", is_fn_down);
-
-            let capture = state.app.state::<AudioCapture>().inner().clone();
-            let app_handle = state.app.clone();
-
-            if is_fn_down {
-                // Fn Pressed: Start Recording (if not already)
-                // If hands-free is active, we are already recording, so this just updates visual state if needed.
-                if !state.is_hands_free {
-                    audio::remember_active_paste_target();
-                    crate::show_main_overlay_window(&state.app);
-                    if let Err(err) = audio::start_recording_for_capture(&capture, app_handle) {
-                         // Ignore "already recording" if we are just pressing Fn while hands-free
-                         if err != "Already recording" {
-                            eprintln!("Failed to start recording on Fn press: {}", err);
-                         }
-                    }
-                }
-            } else {
-                // Fn Released
-                if !state.is_hands_free {
-                     // Stop recording ONLY if NOT in hands-free mode
-                    let handle = tauri::async_runtime::spawn(async move {
-                        if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
-                            eprintln!("Failed to stop recording on Fn release: {}", err);
-                        }
-                    });
-                    if let Ok(mut task) = TASK_HANDLE.lock() {
-                        *task = Some(handle);
-                    }
-                }
+            if !state.is_fn_down {
+                // Prevent stale key-down state if Fn is released first.
+                state.is_push_key_down = false;
             }
         }
     }
-    // 2. Handle Space Key (KeyDown) for Hands-Free Toggle
-    else if event_type == CGEventType::KeyDown {
-        let keycode = event_ref.get_integer_value_field(CGEventField::KeyboardEventKeycode);
-        if keycode == 49 { // Space
-            // Check if Fn is held
+    // 2. Handle configurable hands-free key (KeyDown) for toggle
+    else if event_type == CGEventType::KeyDown || event_type == CGEventType::KeyUp {
+        let keycode =
+            CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
+
+        if let Some(push_keycode) = push_keycode {
+            if keycode == push_keycode {
+                state.is_push_key_down = event_type == CGEventType::KeyDown;
+            }
+        }
+
+        if event_type == CGEventType::KeyDown && keycode == hands_free_toggle_keycode {
             let flags = CGEvent::flags(Some(event_ref));
             if flags.contains(CGEventFlags::MaskSecondaryFn) {
-                 // Fn + Space Detected
-                 state.is_hands_free = !state.is_hands_free;
-                 
-                 let capture = state.app.state::<AudioCapture>().inner().clone();
-                 let app_handle = state.app.clone();
-
-                 if state.is_hands_free {
-                     println!("[Shortcuts] Hands-free mode ACTIVATED");
-                     // Ensure recording is started (it should be because Fn is down, but just in case)
-                     audio::remember_active_paste_target();
-                     crate::show_main_overlay_window(&state.app);
-                     let _ = audio::start_recording_for_capture(&capture, app_handle);
-                 } else {
-                     println!("[Shortcuts] Hands-free mode DEACTIVATED");
-                     // Stop recording immediately
-                     let handle = tauri::async_runtime::spawn(async move {
-                        if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
-                            eprintln!("Failed to stop recording on hands-free toggle off: {}", err);
-                        }
-                    });
-                     if let Ok(mut task) = TASK_HANDLE.lock() {
-                        *task = Some(handle);
-                    }
-                 }
-                 
-                 // Consume the Space event so it doesn't type a space?
-                 // Maybe safer to NOT consume it if user just wants to type Space while holding Fn (rare but possible).
-                 // Converting it to null pointer would consume it.
-                 // return std::ptr::null_mut(); 
+                state.is_hands_free = !state.is_hands_free;
+                if state.is_hands_free {
+                    println!("[Shortcuts] Hands-free mode ACTIVATED");
+                } else {
+                    println!("[Shortcuts] Hands-free mode DEACTIVATED");
+                }
             }
         }
     }
+
+    recompute_push_active(state, push_keycode);
+    sync_recording(state);
+    sync_hold_signal(state);
 
     event.as_ptr()
 }
@@ -121,12 +170,17 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
         let state = Box::new(FnHoldState {
             app,
             is_fn_down: false,
+            is_push_key_down: false,
+            is_push_active: false,
             is_hands_free: false,
+            is_recording_active: false,
+            hold_emitted: false,
         });
         let user_info = Box::into_raw(state) as *mut c_void;
 
         let mask = (1u64 << (CGEventType::FlagsChanged.0 as u64)) 
-                 | (1u64 << (CGEventType::KeyDown.0 as u64));
+                 | (1u64 << (CGEventType::KeyDown.0 as u64))
+                 | (1u64 << (CGEventType::KeyUp.0 as u64));
 
         let tap = unsafe {
             CGEvent::tap_create(

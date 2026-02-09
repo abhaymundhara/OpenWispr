@@ -221,6 +221,7 @@ fn main() {
             store::set_transcription_enabled,
             store::set_language,
             store::get_settings,
+            store::set_shortcuts,
             store::set_llm_settings,
             llm_client::get_ollama_models
         ])

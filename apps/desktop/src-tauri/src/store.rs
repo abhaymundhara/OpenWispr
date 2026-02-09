@@ -29,6 +29,7 @@ impl Default for Analytics {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct Settings {
     pub input_device: Option<String>,
     pub language: Option<String>,
@@ -37,6 +38,25 @@ pub struct Settings {
     pub llm_provider: Option<String>, // "ollama"
     pub ollama_base_url: Option<String>,
     pub ollama_model: Option<String>,
+    pub shortcuts: ShortcutSettings,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct ShortcutSettings {
+    pub push_to_talk: String,
+    pub hands_free_toggle: String,
+    pub command_mode: String,
+}
+
+impl Default for ShortcutSettings {
+    fn default() -> Self {
+        Self {
+            push_to_talk: "fn".to_string(),
+            hands_free_toggle: "fn+space".to_string(),
+            command_mode: "fn+ctrl".to_string(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -48,14 +68,46 @@ impl Default for Settings {
             llm_provider: Some("ollama".to_string()),
             ollama_base_url: Some("http://localhost:11434".to_string()),
             ollama_model: None,
+            shortcuts: ShortcutSettings::default(),
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
 pub struct AppStore {
     pub analytics: Analytics,
     pub settings: Settings,
+}
+
+pub fn normalize_shortcut(raw: &str) -> String {
+    raw.split('+')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+pub fn is_supported_hands_free_shortcut(raw: &str) -> bool {
+    matches!(
+        normalize_shortcut(raw).as_str(),
+        "fn+space" | "fn+enter" | "fn+tab"
+    )
+}
+
+pub fn is_supported_push_to_talk_shortcut(raw: &str) -> bool {
+    matches!(
+        normalize_shortcut(raw).as_str(),
+        "fn" | "fn+enter" | "fn+tab"
+    )
+}
+
+pub fn push_to_talk_shortcut() -> String {
+    get_store().settings.shortcuts.push_to_talk
+}
+
+pub fn hands_free_toggle_shortcut() -> String {
+    get_store().settings.shortcuts.hands_free_toggle
 }
 
 fn store_path(app: &AppHandle) -> Option<PathBuf> {
@@ -189,6 +241,68 @@ pub fn set_llm_settings(
 }
 
 #[tauri::command]
+pub fn set_shortcuts(
+    app: AppHandle,
+    push_to_talk: String,
+    hands_free_toggle: String,
+    command_mode: String,
+) -> Result<ShortcutSettings, String> {
+    let push_to_talk = normalize_shortcut(&push_to_talk);
+    if !is_supported_push_to_talk_shortcut(&push_to_talk) {
+        return Err("Push-to-talk shortcut must be Fn, Fn+Enter, or Fn+Tab".to_string());
+    }
+
+    if !is_supported_hands_free_shortcut(&hands_free_toggle) {
+        return Err("Hands-free shortcut must be Fn+Space, Fn+Enter, or Fn+Tab".to_string());
+    }
+    let hands_free_toggle = normalize_shortcut(&hands_free_toggle);
+    if push_to_talk == hands_free_toggle {
+        return Err("Push-to-talk and hands-free shortcuts must be different".to_string());
+    }
+
+    let command_mode = normalize_shortcut(&command_mode);
+    if command_mode.is_empty() {
+        return Err("Command mode shortcut cannot be empty".to_string());
+    }
+
+    let mut store = get_store();
+    store.settings.shortcuts = ShortcutSettings {
+        push_to_talk,
+        hands_free_toggle,
+        command_mode,
+    };
+    let shortcuts = store.settings.shortcuts.clone();
+    save_store(&app, &store);
+    Ok(shortcuts)
+}
+
+#[tauri::command]
 pub fn get_settings() -> Settings {
     get_store().settings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_shortcut_compacts_and_lowercases() {
+        assert_eq!(normalize_shortcut(" Fn +  Space "), "fn+space");
+        assert_eq!(normalize_shortcut("FN+ENTER"), "fn+enter");
+    }
+
+    #[test]
+    fn hands_free_shortcut_support_is_validated() {
+        assert!(is_supported_hands_free_shortcut("fn+space"));
+        assert!(is_supported_hands_free_shortcut(" fn + enter "));
+        assert!(!is_supported_hands_free_shortcut("fn+ctrl"));
+    }
+
+    #[test]
+    fn push_to_talk_shortcut_support_is_validated() {
+        assert!(is_supported_push_to_talk_shortcut("fn"));
+        assert!(is_supported_push_to_talk_shortcut("fn+enter"));
+        assert!(is_supported_push_to_talk_shortcut(" fn + tab "));
+        assert!(!is_supported_push_to_talk_shortcut("fn+space"));
+    }
 }

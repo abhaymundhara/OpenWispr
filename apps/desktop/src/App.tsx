@@ -27,8 +27,6 @@ import {
   Hash,
   Settings2,
   X,
-  Pencil,
-  Command,
 } from "lucide-react";
 
 const ShortcutKey = ({ children }: { children: React.ReactNode }) => (
@@ -37,16 +35,61 @@ const ShortcutKey = ({ children }: { children: React.ReactNode }) => (
   </kbd>
 );
 
+type ShortcutKeyName = "push_to_talk" | "hands_free_toggle" | "command_mode";
+
+interface ShortcutSettings {
+  push_to_talk: string;
+  hands_free_toggle: string;
+  command_mode: string;
+}
+
+const DEFAULT_SHORTCUTS: ShortcutSettings = {
+  push_to_talk: "fn",
+  hands_free_toggle: "fn+space",
+  command_mode: "fn+ctrl",
+};
+
+const SHORTCUT_OPTIONS: Record<ShortcutKeyName, string[]> = {
+  push_to_talk: ["fn", "fn+enter", "fn+tab"],
+  hands_free_toggle: ["fn+space", "fn+enter", "fn+tab"],
+  command_mode: ["fn+ctrl", "fn+option", "fn+/"],
+};
+
+const formatShortcutPart = (part: string) => {
+  const key = part.trim().toLowerCase();
+  if (key === "fn") return "fn";
+  if (key === "ctrl") return "Ctrl";
+  if (key === "cmd") return "Cmd";
+  if (key === "option") return "Option";
+  if (key === "space") return "Space";
+  if (key === "enter") return "Enter";
+  if (key === "tab") return "Tab";
+  return key.toUpperCase();
+};
+
+const shortcutToKeys = (shortcut: string) =>
+  shortcut
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map(formatShortcutPart);
+
+const shortcutToLabel = (shortcut: string) => shortcutToKeys(shortcut).join(" + ");
+
 const ShortcutRow = ({
   title,
   description,
   keys,
-  onEdit,
+  actionLabel,
+  onAction,
+  actionDisabled,
 }: {
   title: string;
   description: string;
   keys: string[];
-  onEdit: () => void;
+  actionLabel: string;
+  onAction: () => void;
+  actionDisabled?: boolean;
 }) => (
   <div className="flex items-center justify-between rounded-xl border border-zinc-100 bg-zinc-50/50 p-4">
     <div>
@@ -58,18 +101,33 @@ const ShortcutRow = ({
         {keys.map((k, i) => (
           <ShortcutKey key={i}>{k}</ShortcutKey>
         ))}
-        <button
-          onClick={onEdit}
-          className="ml-1.5 text-zinc-400 hover:text-zinc-600"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
       </div>
+      <button
+        onClick={onAction}
+        disabled={actionDisabled}
+        className="inline-flex h-8 min-w-[5.5rem] items-center justify-center rounded-lg bg-zinc-100 px-3 text-[0.82rem] font-medium text-zinc-900 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-55"
+      >
+        {actionLabel}
+      </button>
     </div>
   </div>
 );
 
-const ShortcutsModal = ({ onClose }: { onClose: () => void }) => (
+const ShortcutsModal = ({
+  shortcuts,
+  onCycleShortcut,
+  onResetDefaults,
+  saving,
+  error,
+  onClose,
+}: {
+  shortcuts: ShortcutSettings;
+  onCycleShortcut: (field: ShortcutKeyName) => void;
+  onResetDefaults: () => void;
+  saving: boolean;
+  error?: string;
+  onClose: () => void;
+}) => (
   <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm" onClick={onClose}>
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
@@ -95,24 +153,32 @@ const ShortcutsModal = ({ onClose }: { onClose: () => void }) => (
         <ShortcutRow
           title="Push to talk"
           description="Hold to say something short"
-          keys={["fn"]}
-          onEdit={() => {}}
+          keys={shortcutToKeys(shortcuts.push_to_talk)}
+          actionLabel="Change"
+          onAction={() => onCycleShortcut("push_to_talk")}
+          actionDisabled={saving}
         />
         <ShortcutRow
           title="Hands-free mode"
           description="Press to start and stop dictation"
-          keys={["fn", "Space"]}
-          onEdit={() => {}}
+          keys={shortcutToKeys(shortcuts.hands_free_toggle)}
+          actionLabel="Change"
+          onAction={() => onCycleShortcut("hands_free_toggle")}
+          actionDisabled={saving}
         />
-        <ShortcutRow
-          title="Command Mode"
-          description="Select text and ask Flow or Perplexity"
-          keys={["fn", "^", "Ctrl"]}
-          onEdit={() => {}}
-        />
-        
+
+        {error && (
+          <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+            {error}
+          </p>
+        )}
+
         <div className="pt-4 flex justify-center">
-            <button className="text-sm font-medium text-zinc-500 hover:text-zinc-900">
+            <button
+              onClick={onResetDefaults}
+              disabled={saving}
+              className="text-sm font-medium text-zinc-500 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-55"
+            >
                 Reset to default
             </button>
         </div>
@@ -175,6 +241,7 @@ interface Settings {
   llm_provider: string | null;
   ollama_base_url: string | null;
   ollama_model: string | null;
+  shortcuts: ShortcutSettings;
 }
 
 interface OllamaModel {
@@ -468,6 +535,8 @@ function Dashboard() {
   const [section, setSection] = useState<SettingsSection>("general");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcutError, setShortcutError] = useState<string>();
+  const [savingShortcuts, setSavingShortcuts] = useState(false);
   
   // Real Data State
   const [analytics, setAnalytics] = useState<AnalyticsStats | null>(null);
@@ -612,6 +681,54 @@ function Dashboard() {
     }
   };
 
+  const persistShortcuts = async (next: ShortcutSettings) => {
+    setSavingShortcuts(true);
+    setShortcutError(undefined);
+    try {
+      const updated = await invoke<ShortcutSettings>("set_shortcuts", {
+        pushToTalk: next.push_to_talk,
+        handsFreeToggle: next.hands_free_toggle,
+        commandMode: next.command_mode,
+      });
+      setSettings((prev) => (prev ? { ...prev, shortcuts: updated } : prev));
+    } catch (err) {
+      setShortcutError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingShortcuts(false);
+    }
+  };
+
+  const cycleShortcut = (field: ShortcutKeyName) => {
+    const current = (settings?.shortcuts?.[field] || DEFAULT_SHORTCUTS[field]).toLowerCase();
+    const options = SHORTCUT_OPTIONS[field];
+    const currentIndex = options.findIndex((option) => option === current);
+    const conflictingValue =
+      field === "push_to_talk"
+        ? (settings?.shortcuts?.hands_free_toggle || DEFAULT_SHORTCUTS.hands_free_toggle).toLowerCase()
+        : field === "hands_free_toggle"
+          ? (settings?.shortcuts?.push_to_talk || DEFAULT_SHORTCUTS.push_to_talk).toLowerCase()
+          : undefined;
+
+    let nextValue = current;
+    for (let i = 0; i < options.length; i += 1) {
+      const candidate = options[(currentIndex + 1 + i + options.length) % options.length];
+      if (!conflictingValue || candidate !== conflictingValue) {
+        nextValue = candidate;
+        break;
+      }
+    }
+
+    const nextShortcuts: ShortcutSettings = {
+      ...(settings?.shortcuts ?? DEFAULT_SHORTCUTS),
+      [field]: nextValue,
+    };
+    void persistShortcuts(nextShortcuts);
+  };
+
+  const resetShortcutsToDefault = () => {
+    void persistShortcuts(DEFAULT_SHORTCUTS);
+  };
+
   const downloadedModels = models.filter((m) => m.downloaded);
   const activeModelInfo = models.find((m) => m.name === activeModel);
   const libraryModels = models.filter((m) => m.can_download);
@@ -635,6 +752,7 @@ function Dashboard() {
         : section === "system"
           ? "Desktop behavior and app-level options."
           : "Configure LLM provider and models.";
+  const shortcuts = settings?.shortcuts ?? DEFAULT_SHORTCUTS;
 
   return (
     <div
@@ -871,9 +989,12 @@ function Dashboard() {
                       <div className="divide-y divide-zinc-100">
                         <LightSettingsRow
                           title="Keyboard shortcuts"
-                          description="Manage global hotkeys"
+                          description={`Push to talk: ${shortcutToLabel(shortcuts.push_to_talk)}  |  Hands-free: ${shortcutToLabel(shortcuts.hands_free_toggle)}`}
                           actionLabel="Change"
-                          onAction={() => setShortcutsOpen(true)}
+                          onAction={() => {
+                            setShortcutError(undefined);
+                            setShortcutsOpen(true);
+                          }}
                         />
                         <LightSettingsRow
                           title="Microphone"
@@ -1009,7 +1130,14 @@ function Dashboard() {
           
           <AnimatePresence>
             {shortcutsOpen && (
-                <ShortcutsModal onClose={() => setShortcutsOpen(false)} />
+                <ShortcutsModal
+                  shortcuts={shortcuts}
+                  onCycleShortcut={cycleShortcut}
+                  onResetDefaults={resetShortcutsToDefault}
+                  saving={savingShortcuts}
+                  error={shortcutError}
+                  onClose={() => setShortcutsOpen(false)}
+                />
             )}
           </AnimatePresence>
         </main>
