@@ -15,7 +15,7 @@ import {
   NotebookPen,
   CircleHelp,
   Bell,
-  UserRound,
+
   SlidersHorizontal,
   Monitor,
   Keyboard,
@@ -24,9 +24,6 @@ import {
   CheckCircle2,
   Library,
   LoaderCircle,
-  Users,
-  CreditCard,
-  ShieldCheck,
   Hash,
   Settings2,
 } from "lucide-react";
@@ -109,11 +106,7 @@ const CleanButton = ({
 type SettingsSection =
   | "general"
   | "system"
-  | "models"
-  | "account"
-  | "team"
-  | "billing"
-  | "privacy";
+  | "models";
 
 type AppNavItemProps = {
   active?: boolean;
@@ -364,24 +357,14 @@ function Dashboard() {
       ? "General"
       : section === "system"
         ? "System"
-        : section === "models"
-          ? "Model Library"
-          : section === "account"
-            ? "Account"
-            : section === "team"
-              ? "Team"
-              : section === "billing"
-                ? "Plans and Billing"
-                : "Data and Privacy";
+        : "Model Library";
 
   const sectionSummary =
     section === "general"
       ? "Core dictation controls and defaults."
       : section === "system"
         ? "Desktop behavior and app-level options."
-        : section === "models"
-          ? "Download, activate, and manage speech models."
-          : "Coming soon.";
+        : "Download, activate, and manage speech models.";
 
   return (
     <div
@@ -556,8 +539,6 @@ function Dashboard() {
             </div>
           </div>
 
-
-
           {settingsOpen && (
             <div
               className="absolute inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm"
@@ -593,40 +574,8 @@ function Dashboard() {
                       <LightSettingsNavItem
                         active={section === "models"}
                         icon={<Hash className="h-4 w-4" />}
-                        label="Vibe coding"
+                        label="Models"
                         onClick={() => setSection("models")}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="px-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                      Account
-                    </p>
-                    <div className="mt-2 space-y-0.5">
-                      <LightSettingsNavItem
-                        active={section === "account"}
-                        icon={<UserRound className="h-4 w-4" />}
-                        label="Account"
-                        onClick={() => setSection("account")}
-                      />
-                      <LightSettingsNavItem
-                        active={section === "team"}
-                        icon={<Users className="h-4 w-4" />}
-                        label="Team"
-                        onClick={() => setSection("team")}
-                      />
-                      <LightSettingsNavItem
-                        active={section === "billing"}
-                        icon={<CreditCard className="h-4 w-4" />}
-                        label="Plans and Billing"
-                        onClick={() => setSection("billing")}
-                      />
-                      <LightSettingsNavItem
-                        active={section === "privacy"}
-                        icon={<ShieldCheck className="h-4 w-4" />}
-                        label="Data and Privacy"
-                        onClick={() => setSection("privacy")}
                       />
                     </div>
                   </div>
@@ -653,7 +602,7 @@ function Dashboard() {
                           description="Built-in mic (recommended)"
                           actionLabel="Change"
                         />
-                         <LightSettingsRow
+                        <LightSettingsRow
                           title="Languages"
                           description="English · Hinglish"
                           actionLabel="Change"
@@ -662,71 +611,97 @@ function Dashboard() {
                     )}
 
                     {section === "models" && (
-                       <div className="space-y-6">
-                          <div className="rounded-lg border border-zinc-100 bg-zinc-50/50 p-4">
-                            <h4 className="mb-2 text-sm font-medium text-zinc-900">Active Model</h4>
-                            <div className="flex items-center justify-between">
-                               <div>
-                                  <p className="text-sm text-zinc-700 font-medium">{activeModelInfo?.name || "None selected"}</p>
-                                  <p className="text-xs text-zinc-500">{activeModelInfo?.size ? MODEL_SIZE_HINTS[activeModelInfo.name] : ""} · {activeModelInfo?.runtime || "whisper.cpp"}</p>
-                               </div>
-                               <div className="flex items-center text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
-                                  <CheckCircle2 className="mr-1 h-3 w-3" />
-                                  Active
-                               </div>
+                      <div className="space-y-6">
+                        <div className="rounded-lg border border-zinc-100 bg-zinc-50/50 p-4">
+                          <h4 className="mb-2 text-sm font-medium text-zinc-900">
+                            Active Model
+                          </h4>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm text-zinc-700 font-medium">
+                                {activeModelInfo?.name || "None selected"}
+                              </p>
+                              <p className="text-xs text-zinc-500">
+                                {activeModelInfo?.size
+                                  ? MODEL_SIZE_HINTS[activeModelInfo.name]
+                                  : ""}{" "}
+                                · {activeModelInfo?.runtime || "whisper.cpp"}
+                              </p>
+                            </div>
+                            <div className="flex items-center text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                              <CheckCircle2 className="mr-1 h-3 w-3" />
+                              Active
                             </div>
                           </div>
-                      
-                          <div>
-                            <h4 className="mb-3 text-sm font-medium text-zinc-900">Available Models</h4>
-                            <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
-                              {libraryModels.map((model) => {
-                                const isActive = activeModel === model.name;
-                                const isDownloading = activeDownload === model.name;
-                                const percent = typeof downloadProgress[model.name]?.percent === "number"
-                                    ? Math.round(downloadProgress[model.name].percent ?? 0)
-                                    : 0;
+                        </div>
 
-                                return (
-                                  <div key={model.name} className="flex items-center justify-between p-4 bg-white first:rounded-t-lg last:rounded-b-lg">
-                                     <div>
-                                        <p className="text-sm font-medium text-zinc-900">{model.name}</p>
-                                        <p className="text-xs text-zinc-500">{MODEL_SIZE_HINTS[model.name] || "Unknown size"}</p>
-                                     </div>
-                                     <div>
-                                        {isActive ? (
-                                           <span className="text-xs font-medium text-zinc-400">Installed</span>
-                                        ) : isDownloading ? (
-                                            <span className="inline-flex items-center gap-2 text-xs font-medium text-blue-600">
-                                              <LoaderCircle className="h-3 w-3 animate-spin" />
-                                              {percent}%
-                                            </span>
-                                        ) : model.downloaded ? (
-                                           <button onClick={() => onSelectModel(model.name)} className="text-xs font-medium text-zinc-900 hover:underline">Activate</button>
-                                        ) : (
-                                           <button onClick={() => onDownload(model.name)} className="rounded bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-800">Download</button>
-                                        )}
-                                     </div>
+                        <div>
+                          <h4 className="mb-3 text-sm font-medium text-zinc-900">
+                            Available Models
+                          </h4>
+                          <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+                            {libraryModels.map((model) => {
+                              const isActive = activeModel === model.name;
+                              const isDownloading =
+                                activeDownload === model.name;
+                              const percent =
+                                typeof downloadProgress[model.name]?.percent ===
+                                "number"
+                                  ? Math.round(
+                                      downloadProgress[model.name].percent ?? 0,
+                                    )
+                                  : 0;
+
+                              return (
+                                <div
+                                  key={model.name}
+                                  className="flex items-center justify-between p-4 bg-white first:rounded-t-lg last:rounded-b-lg"
+                                >
+                                  <div>
+                                    <p className="text-sm font-medium text-zinc-900">
+                                      {model.name}
+                                    </p>
+                                    <p className="text-xs text-zinc-500">
+                                      {MODEL_SIZE_HINTS[model.name] ||
+                                        "Unknown size"}
+                                    </p>
                                   </div>
-                                )
-                              })}
-                            </div>
+                                  <div>
+                                    {isActive ? (
+                                      <span className="text-xs font-medium text-zinc-400">
+                                        Installed
+                                      </span>
+                                    ) : isDownloading ? (
+                                      <span className="inline-flex items-center gap-2 text-xs font-medium text-blue-600">
+                                        <LoaderCircle className="h-3 w-3 animate-spin" />
+                                        {percent}%
+                                      </span>
+                                    ) : model.downloaded ? (
+                                      <button
+                                        onClick={() =>
+                                          onSelectModel(model.name)
+                                        }
+                                        className="text-xs font-medium text-zinc-900 hover:underline"
+                                      >
+                                        Activate
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => onDownload(model.name)}
+                                        className="rounded bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-800"
+                                      >
+                                        Download
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                       </div>
+                        </div>
+                      </div>
                     )}
-                    
-                    {(section === "account" || section === "billing" || section === "team" || section === "privacy") && (
-                       <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 text-center">
-                          <div className="rounded-full bg-zinc-100 p-3">
-                             {section === "account" && <UserRound className="h-6 w-6 text-zinc-400" />}
-                             {section === "billing" && <CreditCard className="h-6 w-6 text-zinc-400" />}
-                             {section === "team" && <Users className="h-6 w-6 text-zinc-400" />}
-                             {section === "privacy" && <ShieldCheck className="h-6 w-6 text-zinc-400" />}
-                          </div>
-                          <h3 className="mt-3 text-sm font-medium text-zinc-900">Coming Soon</h3>
-                          <p className="mt-1 text-xs text-zinc-500">This section is under development.</p>
-                       </div>
-                    )}
+
 
                   </div>
                 </main>
