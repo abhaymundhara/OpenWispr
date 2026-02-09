@@ -1,4 +1,6 @@
-use llm::{LlmAdapter, LlmResult};
+use llm::{
+    adapters::llamacpp::LlamaCppAdapter, LlmAdapter, LlmConfig,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use thiserror::Error;
@@ -7,8 +9,8 @@ mod prompts;
 
 #[derive(Debug, Error)]
 pub enum ProcessorError {
-    #[error("LLM inference failed: {0}")]
-    LlmError(#[from] llm::LlmError),
+    #[error("LLM error: {0}")]
+    LlmError(String),
 
     #[error("Empty input text")]
     EmptyInput,
@@ -49,18 +51,36 @@ pub struct ProcessingResult {
 }
 
 pub struct TextProcessor {
-    llm_adapter: Box<dyn LlmAdapter>,
+    llm_adapter: LlamaCppAdapter,
     mode: FormattingMode,
     min_words_for_processing: usize,
 }
 
 impl TextProcessor {
-    pub fn new(llm_adapter: Box<dyn LlmAdapter>, mode: FormattingMode) -> Self {
-        Self {
-            llm_adapter,
+    pub async fn new(model_name: &str, mode: FormattingMode) -> Result<Self> {
+        let mut adapter = LlamaCppAdapter::new();
+        
+        // Create config
+        let config = LlmConfig {
+            model_name: model_name.to_string(),
+            model_path: None, // Will auto-resolve from cache
+            temperature: 0.7,
+            max_tokens: 512,
+            top_p: 0.9,
+            top_k: 40,
+        };
+        
+        // Initialize the adapter
+        adapter
+            .initialize(config)
+            .await
+            .map_err(|e| ProcessorError::LlmError(e.to_string()))?;
+
+        Ok(Self {
+            llm_adapter:adapter,
             mode,
             min_words_for_processing: 3, // Skip LLM for very short text
-        }
+        })
     }
 
     pub fn with_min_words(mut self, min_words: usize) -> Self {
@@ -68,7 +88,7 @@ impl TextProcessor {
         self
     }
 
-    pub fn process(&self, raw_text: &str) -> Result<ProcessingResult> {
+    pub async fn process(&self, raw_text: &str) -> Result<ProcessingResult> {
         let start = Instant::now();
 
         // Validate input
@@ -100,7 +120,9 @@ impl TextProcessor {
         // Run LLM inference
         let formatted = self
             .llm_adapter
-            .generate_response(&prompt, 512)? // Max 512 tokens output
+            .run_prompt(prompt, 512) // Max 512 tokens output
+            .await
+            .map_err(|e| ProcessorError::LlmError(e.to_string()))?
             .trim()
             .to_string();
 
