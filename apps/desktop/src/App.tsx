@@ -60,6 +60,41 @@ type TranscriptionStatusEvent = {
   error?: string;
 };
 
+interface AnalyticsStats {
+  lifetime_removed_sec: number;
+  sessions_count: number;
+  day_streak: number;
+  last_session_date: string | null;
+  total_words: number;
+  total_seconds: number;
+}
+
+interface AudioDevice {
+  id: string;
+  name: string;
+}
+
+interface Settings {
+  input_device: string | null;
+  language: string | null;
+  local_transcription_enabled: boolean;
+  llm_provider: string | null;
+  ollama_base_url: string | null;
+  ollama_model: string | null;
+}
+
+interface OllamaModel {
+  name: string;
+  size: number;
+  digest: string;
+  details: {
+    format: string;
+    family: string;
+    parameter_size: string;
+    quantization_level: string;
+  };
+}
+
 const MODEL_SIZE_HINTS: Record<string, string> = {
   tiny: "~75 MB",
   "tiny.en": "~75 MB",
@@ -257,12 +292,15 @@ const LightTranscriptionSettings = ({
   models,
   activeModel,
   onSelectModel,
+  enabled,
+  onToggleEnabled,
 }: {
   models: ModelInfo[];
   activeModel?: string;
   onSelectModel: (model: string) => void;
+  enabled: boolean;
+  onToggleEnabled: (enabled: boolean) => void;
 }) => {
-  const [enabled, setEnabled] = useState(true);
 
   return (
     <div className="py-5 border-b border-zinc-100 last:border-0">
@@ -284,7 +322,7 @@ const LightTranscriptionSettings = ({
              </p>
          </div>
          <button 
-           onClick={() => setEnabled(!enabled)}
+           onClick={() => onToggleEnabled(!enabled)}
            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${enabled ? 'bg-zinc-900' : 'bg-zinc-200'}`}
          >
            <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${enabled ? 'translate-x-4' : 'translate-x-0'}`} />
@@ -335,17 +373,61 @@ function Dashboard() {
   const [activeModel, setActiveModel] = useState<string>();
   const [section, setSection] = useState<SettingsSection>("general");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  
+  // Real Data State
+  const [analytics, setAnalytics] = useState<AnalyticsStats | null>(null);
+  const [inputDevices, setInputDevices] = useState<AudioDevice[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
 
-  const loadModels = async () => {
+  // LLM State
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+  const [loadingOllama, setLoadingOllama] = useState(false);
+
+  const fetchOllamaModels = async (baseUrl: string) => {
+      setLoadingOllama(true);
+      try {
+          const models = await invoke<OllamaModel[]>("get_ollama_models", { baseUrl });
+          setOllamaModels(models);
+          // Auto-select first if none selected
+          if (!settings?.ollama_model && models.length > 0) {
+              const first = models[0].name;
+              await updateLlmSettings(settings?.llm_provider || "ollama", baseUrl, first);
+          }
+      } catch (e) {
+          setError("Failed to fetch Ollama models: " + e);
+          setOllamaModels([]); // Clear on error
+      } finally {
+          setLoadingOllama(false);
+      }
+  };
+
+  const updateLlmSettings = async (provider: string, baseUrl: string, model: string) => {
+      await invoke("set_llm_settings", { provider, baseUrl, model });
+      setSettings(prev => prev ? ({ ...prev, llm_provider: provider, ollama_base_url: baseUrl, ollama_model: model }) : null);
+  };
+
+  const onSettingsOpen = () => {
+      if (settings?.ollama_base_url) {
+          void fetchOllamaModels(settings.ollama_base_url);
+      }
+  };
+
+  const loadData = async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const [data, selected] = await Promise.all([
+      const [modelsData, selectedModel, analyticsData, devicesData, settingsData] = await Promise.all([
         invoke<ModelInfo[]>("list_models"),
         invoke<string>("get_active_model"),
+        invoke<AnalyticsStats>("get_analytics_stats"),
+        invoke<AudioDevice[]>("list_input_devices"),
+        invoke<Settings>("get_settings"),
       ]);
-      setModels(data);
-      setActiveModel(selected);
+      setModels(modelsData);
+      setActiveModel(selectedModel);
+      setAnalytics(analyticsData);
+      setInputDevices(devicesData);
+      setSettings(settingsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -354,13 +436,15 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    void loadModels();
+    void loadData();
   }, []);
+
+
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     const setup = async () => {
-      unlisten = await listen<ModelDownloadProgressEvent>(
+      const unlistenProgress = await listen<ModelDownloadProgressEvent>(
         "model-download-progress",
         (event) => {
           const progress = event.payload;
@@ -368,11 +452,20 @@ function Dashboard() {
             ...prev,
             [progress.model]: progress,
           }));
-          if (progress.error) {
+           if (progress.error) {
             setError(progress.error);
           }
         },
       );
+      
+      const unlistenAnalytics = await listen<AnalyticsStats>("analytics-update", (e) => {
+          setAnalytics(e.payload);
+      });
+
+      unlisten = () => {
+          unlistenProgress();
+          unlistenAnalytics();
+      };
     };
 
     void setup();
@@ -400,7 +493,13 @@ function Dashboard() {
 
     try {
       await invoke("download_model", { model });
-      await loadModels();
+      // Reload models to update status
+      const [modelsData, selectedModel] = await Promise.all([
+        invoke<ModelInfo[]>("list_models"),
+        invoke<string>("get_active_model"),
+      ]);
+      setModels(modelsData);
+      setActiveModel(selectedModel);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -440,7 +539,7 @@ function Dashboard() {
         ? "Manage offline transcription models."
         : section === "system"
           ? "Desktop behavior and app-level options."
-          : "Download, activate, and manage speech models.";
+          : "Configure LLM provider and models.";
 
   return (
     <div
@@ -497,6 +596,7 @@ function Dashboard() {
                 onClick={() => {
                   setSection("general");
                   setSettingsOpen(true);
+                  onSettingsOpen();
                 }}
               />
               <AppNavItem
@@ -544,14 +644,14 @@ function Dashboard() {
                   <div>
                     <div className="flex items-baseline gap-3">
                       <span className="text-5xl font-semibold tracking-tight text-white/96">
-                        11 mins
+                        {analytics ? (analytics.lifetime_removed_sec / 60).toFixed(0) : "0"} mins
                       </span>
                       <span className="text-lg text-white/58">
                         lifetime saved
                       </span>
                     </div>
                     <div className="mt-2 text-sm text-white/40">
-                      38 sessions • all time
+                      {analytics?.sessions_count || 0} sessions • all time
                     </div>
                   </div>
                   <div className="flex h-2 w-2 rounded-full bg-white/20"></div>
@@ -560,30 +660,30 @@ function Dashboard() {
             </div>
 
             <div className="mt-8 grid grid-cols-3 gap-12 px-2">
-              <div className="text-center">
-                <div className="text-4xl font-semibold tracking-tight text-white/96">
-                  1
-                </div>
-                <div className="mt-1 text-sm font-medium text-white/58">
-                  Day Streak
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="text-4xl font-semibold tracking-tight text-white/96">
-                  165
-                </div>
-                <div className="mt-1 text-sm font-medium text-white/58">
-                  Avg WPM
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="text-4xl font-semibold tracking-tight text-white/96">
-                  384
-                </div>
-                <div className="mt-1 text-sm font-medium text-white/58">
-                  Words
-                </div>
-              </div>
+               <div className="text-center">
+                 <div className="text-4xl font-semibold tracking-tight text-white/96">
+                   {analytics?.day_streak || 0}
+                 </div>
+                 <div className="mt-1 text-sm font-medium text-white/58">
+                   Day Streak
+                 </div>
+               </div>
+               <div className="text-center">
+                 <div className="text-4xl font-semibold tracking-tight text-white/96">
+                   {analytics && analytics.total_seconds > 0 ? (analytics.total_words / (analytics.total_seconds / 60)).toFixed(0) : "0"}
+                 </div>
+                 <div className="mt-1 text-sm font-medium text-white/58">
+                   Avg WPM
+                 </div>
+               </div>
+               <div className="text-center">
+                 <div className="text-4xl font-semibold tracking-tight text-white/96">
+                   {analytics?.total_words || 0}
+                 </div>
+                 <div className="mt-1 text-sm font-medium text-white/58">
+                   Words
+                 </div>
+               </div>
             </div>
 
             <div className="mt-12">
@@ -681,13 +781,30 @@ function Dashboard() {
                         />
                         <LightSettingsRow
                           title="Microphone"
-                          description="Built-in mic (recommended)"
+                          description={settings?.input_device || "Default System Device"}
                           actionLabel="Change"
+                          onAction={async () => {
+                             // Simple cycle for now
+                             if (inputDevices.length === 0) return;
+                             const currentIndex = inputDevices.findIndex(d => d.name === settings?.input_device);
+                             const nextIndex = (currentIndex + 1) % inputDevices.length;
+                             const nextDevice = inputDevices[nextIndex];
+                             await invoke("set_input_device", { deviceId: nextDevice.id });
+                             setSettings(prev => prev ? ({ ...prev, input_device: nextDevice.name }) : null);
+                          }}
                         />
                         <LightSettingsRow
                           title="Languages"
-                          description="English · Hinglish"
+                          description={settings?.language === "en" ? "English" : settings?.language === "hi" ? "Hindi" : "Auto"}
                           actionLabel="Change"
+                          onAction={async () => {
+                             const langs = ["en", "hi", "auto"];
+                             const current = settings?.language || "en";
+                             const currentIndex = langs.indexOf(current);
+                             const next = langs[(currentIndex + 1) % langs.length];
+                             await invoke("set_language", { language: next });
+                             setSettings(prev => prev ? ({ ...prev, language: next }) : null);
+                          }}
                         />
                       </div>
                     )}
@@ -698,6 +815,11 @@ function Dashboard() {
                             ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "sherpa-onnx/parakeet-tdt-0.6b-v2-int8"].includes(m.name)
                           )}
                           activeModel={activeModel}
+                          enabled={settings?.local_transcription_enabled ?? true}
+                          onToggleEnabled={async (enabled) => {
+                              await invoke("set_transcription_enabled", { enabled });
+                              setSettings(prev => prev ? ({ ...prev, local_transcription_enabled: enabled }) : null);
+                          }}
                           onSelectModel={(model) => {
                              const m = models.find(x => x.name === model);
                              if (m && !m.downloaded) {
@@ -710,95 +832,76 @@ function Dashboard() {
                     )}
 
                     {section === "models" && (
-                      <div className="space-y-6">
-                        <div className="rounded-lg border border-zinc-100 bg-zinc-50/50 p-4">
-                          <h4 className="mb-2 text-sm font-medium text-zinc-900">
-                            Active Model
-                          </h4>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm text-zinc-700 font-medium">
-                                {activeModelInfo?.name || "None selected"}
-                              </p>
-                              <p className="text-xs text-zinc-500">
-                                {activeModelInfo?.size
-                                  ? MODEL_SIZE_HINTS[activeModelInfo.name]
-                                  : ""}{" "}
-                                · {activeModelInfo?.runtime || "whisper.cpp"}
-                              </p>
-                            </div>
-                            <div className="flex items-center text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
-                              <CheckCircle2 className="mr-1 h-3 w-3" />
-                              Active
-                            </div>
-                          </div>
-                        </div>
+                       <div className="space-y-6">
+                           {/* Provider Selection */}
+                           <div className="space-y-3">
+                               <label className="text-sm font-medium text-zinc-900">LLM Provider</label>
+                               <div className="relative">
+                                   <select
+                                       value={settings?.llm_provider || "ollama"}
+                                       onChange={(e) => updateLlmSettings(e.target.value, settings?.ollama_base_url || "http://localhost:11434", settings?.ollama_model || "")}
+                                       className="w-full appearance-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                                   >
+                                       <option value="ollama">Ollama</option>
+                                   </select>
+                                   <ArrowRight className="absolute right-3 top-3 h-4 w-4 rotate-90 text-zinc-400 pointer-events-none" />
+                               </div>
+                           </div>
 
-                        <div>
-                          <h4 className="mb-3 text-sm font-medium text-zinc-900">
-                            Available Models
-                          </h4>
-                          <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
-                            {libraryModels.map((model) => {
-                              const isActive = activeModel === model.name;
-                              const isDownloading =
-                                activeDownload === model.name;
-                              const percent =
-                                typeof downloadProgress[model.name]?.percent ===
-                                "number"
-                                  ? Math.round(
-                                      downloadProgress[model.name].percent ?? 0,
-                                    )
-                                  : 0;
+                           {/* Ollama Configuration */}
+                           {settings?.llm_provider === "ollama" && (
+                               <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-200">
+                                   <div className="space-y-3">
+                                       <label className="text-sm font-medium text-zinc-900">Ollama Base URL</label>
+                                       <div className="flex gap-2">
+                                           <input
+                                               type="text"
+                                               value={settings?.ollama_base_url || ""}
+                                               onChange={(e) => {
+                                                   const val = e.target.value;
+                                                   setSettings(prev => prev ? ({ ...prev, ollama_base_url: val }) : null);
+                                               }}
+                                               onBlur={() => updateLlmSettings("ollama", settings?.ollama_base_url || "http://localhost:11434", settings?.ollama_model || "")}
+                                               placeholder="http://localhost:11434"
+                                               className="flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                                           />
+                                            <button 
+                                               onClick={() => fetchOllamaModels(settings?.ollama_base_url || "http://localhost:11434")}
+                                               disabled={loadingOllama}
+                                               className="rounded-lg bg-zinc-100 px-4 text-sm font-medium text-zinc-900 hover:bg-zinc-200 disabled:opacity-50"
+                                            >
+                                                {loadingOllama ? <LoaderCircle className="h-4 w-4 animate-spin" /> : "Refresh"}
+                                            </button>
+                                       </div>
+                                       <p className="text-xs text-zinc-500">Default: http://localhost:11434</p>
+                                   </div>
 
-                              return (
-                                <div
-                                  key={model.name}
-                                  className="flex items-center justify-between p-4 bg-white first:rounded-t-lg last:rounded-b-lg"
-                                >
-                                  <div>
-                                    <p className="text-sm font-medium text-zinc-900">
-                                      {model.name}
-                                    </p>
-                                    <p className="text-xs text-zinc-500">
-                                      {MODEL_SIZE_HINTS[model.name] ||
-                                        "Unknown size"}
-                                    </p>
-                                  </div>
-                                  <div>
-                                    {isActive ? (
-                                      <span className="text-xs font-medium text-zinc-400">
-                                        Installed
-                                      </span>
-                                    ) : isDownloading ? (
-                                      <span className="inline-flex items-center gap-2 text-xs font-medium text-blue-600">
-                                        <LoaderCircle className="h-3 w-3 animate-spin" />
-                                        {percent}%
-                                      </span>
-                                    ) : model.downloaded ? (
-                                      <button
-                                        onClick={() =>
-                                          onSelectModel(model.name)
-                                        }
-                                        className="text-xs font-medium text-zinc-900 hover:underline"
-                                      >
-                                        Activate
-                                      </button>
-                                    ) : (
-                                      <button
-                                        onClick={() => onDownload(model.name)}
-                                        className="rounded bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-800"
-                                      >
-                                        Download
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
+                                   <div className="space-y-3">
+                                       <label className="text-sm font-medium text-zinc-900">Model</label>
+                                       <div className="relative">
+                                           <select
+                                               value={settings?.ollama_model || ""}
+                                               onChange={(e) => updateLlmSettings("ollama", settings?.ollama_base_url || "", e.target.value)}
+                                               className="w-full appearance-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                                           >
+                                               <option value="" disabled>Select a model</option>
+                                               {ollamaModels.map(m => (
+                                                   <option key={m.digest} value={m.name}>
+                                                       {m.name} ({(m.size / 1024 / 1024 / 1024).toFixed(1)} GB)
+                                                   </option>
+                                               ))}
+                                           </select>
+                                           <ArrowRight className="absolute right-3 top-3 h-4 w-4 rotate-90 text-zinc-400 pointer-events-none" />
+                                       </div>
+                                       {ollamaModels.length === 0 && !loadingOllama && (
+                                           <p className="text-xs text-amber-600 flex items-center mt-2">
+                                               No models found. Ensure Ollama is running.
+                                           </p>
+                                       )}
+                                   </div>
+                               </div>
+                           )}
+                       </div>
                     )}
 
 

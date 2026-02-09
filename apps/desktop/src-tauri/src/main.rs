@@ -16,7 +16,10 @@ mod fn_key_macos;
 #[cfg(target_os = "windows")]
 mod fn_key_windows;
 mod models;
+mod store;
+mod llm_client;
 use audio::AudioCapture;
+use store::init_store;
 
 fn verbose_logs_enabled() -> bool {
     std::env::var("OPENWISPR_VERBOSE_LOGS")
@@ -110,6 +113,7 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle();
+            init_store(&handle);
             if let Some(main_window) = app.get_window("main") {
                 // Keep overlay non-interactive so it does not block the active app
                 // while still allowing us to keep the process alive.
@@ -207,10 +211,18 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             audio::start_recording,
             audio::stop_recording,
+            audio::list_input_devices,
+            audio::set_input_device,
             models::list_models,
             models::download_model,
             models::get_active_model,
-            models::set_active_model
+            models::set_active_model,
+            store::get_analytics_stats,
+            store::set_transcription_enabled,
+            store::set_language,
+            store::get_settings,
+            store::set_llm_settings,
+            llm_client::get_ollama_models
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

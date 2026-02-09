@@ -488,6 +488,22 @@ fn calculate_rms(samples: &[f32]) -> f32 {
 }
 
 fn select_input_device(host: &Host) -> Result<Device, String> {
+    // 1. Check persistent store
+    if let Some(preferred_id) = crate::store::get_input_device_id() {
+         if let Ok(devices) = host.input_devices() {
+             for device in devices {
+                 if let Ok(name) = device.name() {
+                     if name == preferred_id {
+                         if verbose_logs_enabled() {
+                             println!("[audio] selected input device from store: {}", name);
+                         }
+                         return Ok(device);
+                     }
+                 }
+             }
+         }
+    }
+
     if let Ok(requested) = std::env::var("OPENWISPR_INPUT_DEVICE") {
         let needle = requested.trim().to_lowercase();
         if !needle.is_empty() {
@@ -929,6 +945,11 @@ pub async fn stop_recording_for_capture(
             );
             println!("[stt] transcript: {}", result.text);
 
+            // Update stats
+            let duration = audio_seconds as f64;
+            let word_count = result.text.split_whitespace().count() as u64;
+            crate::store::update_analytics(&app, duration, word_count);
+
             // Paste synchronously BEFORE emitting events to ensure it completes
             if verbose_logs_enabled() {
                 println!("[paste] attempting to paste {} chars to active window", result.text.chars().count());
@@ -978,6 +999,31 @@ pub async fn stop_recording(
     app: AppHandle,
 ) -> Result<(), String> {
     stop_recording_for_capture(state.inner().clone(), app).await
+}
+
+#[derive(Serialize)]
+pub struct AudioDevice {
+    id: String,
+    name: String,
+}
+
+#[tauri::command]
+pub fn list_input_devices() -> Result<Vec<AudioDevice>, String> {
+    let host = cpal::default_host();
+    let devices = host.input_devices().map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for device in devices {
+        if let Ok(name) = device.name() {
+             result.push(AudioDevice { id: name.clone(), name });
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn set_input_device(app: AppHandle, device_id: String) -> Result<(), String> {
+    crate::store::set_input_device_id(&app, device_id);
+    Ok(())
 }
 
 #[cfg(test)]
