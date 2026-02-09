@@ -71,7 +71,7 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
-  "sherpa-onnx/parakeet-tdt-0.6b-v2-int8": "~1.0 GB",
+  "sherpa-onnx/parakeet-tdt-0.6b-v2-int8": "~600 MB",
   "mlx-community/parakeet-tdt-0.6b-v2": "~1.2 GB",
   "distil-whisper-small.en": "~400 MB",
   "distil-whisper-medium.en": "~800 MB",
@@ -105,6 +105,7 @@ const CleanButton = ({
 
 type SettingsSection =
   | "general"
+  | "transcription"
   | "system"
   | "models";
 
@@ -252,6 +253,77 @@ const LightSettingsRow = ({
   </div>
 );
 
+const LightTranscriptionSettings = ({
+  models,
+  activeModel,
+  onSelectModel,
+}: {
+  models: ModelInfo[];
+  activeModel?: string;
+  onSelectModel: (model: string) => void;
+}) => {
+  const [enabled, setEnabled] = useState(true);
+
+  return (
+    <div className="py-5 border-b border-zinc-100 last:border-0">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="p-1.5 rounded-md bg-purple-100/50 text-purple-600">
+          <Mic className="h-4 w-4" />
+        </div>
+        <h4 className="text-[0.95rem] font-semibold text-zinc-900">Local Transcription</h4>
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[0.65rem] font-medium bg-zinc-100 text-zinc-500 uppercase tracking-wide">
+          Offline
+        </span>
+      </div>
+
+      <div className="flex items-start justify-between mb-4 pl-[34px]">
+         <div className="pr-4">
+             <h5 className="text-[0.9rem] font-medium text-zinc-900">Enable Local Transcription</h5>
+             <p className="mt-0.5 text-[0.8rem] text-zinc-500 leading-relaxed">
+               100% private, works offline. Select a model below.
+             </p>
+         </div>
+         <button 
+           onClick={() => setEnabled(!enabled)}
+           className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${enabled ? 'bg-zinc-900' : 'bg-zinc-200'}`}
+         >
+           <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+         </button>
+      </div>
+
+      <div className={`pl-[34px] transition-all duration-200 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none grayscale'}`}>
+          <div className="relative">
+            <select
+              value={activeModel}
+              onChange={(e) => onSelectModel(e.target.value)}
+              className="block w-full appearance-none rounded-lg border border-zinc-200 bg-zinc-50 py-2 pl-3 pr-8 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 sm:text-sm"
+            >
+              <option value="" disabled>Select a model</option>
+              {models.map((model) => (
+                <option key={model.name} value={model.name}>
+                  {model.name} ({MODEL_SIZE_HINTS[model.name] || "Unknown size"}) {model.downloaded ? "- Ready" : "- Download Needed"}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-zinc-500">
+               <ArrowRight className="h-4 w-4 rotate-90" />
+            </div>
+          </div>
+          
+          {activeModel && models.find(m => m.name === activeModel)?.downloaded && (
+             <p className="mt-2 flex items-center text-xs text-emerald-600 font-medium">
+               <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+               Model ready to use
+             </p>
+          )}
+           <p className="mt-2 text-xs text-zinc-400">
+             Whisper models are general-purpose. Parakeet models offer higher accuracy but may be larger.
+           </p>
+      </div>
+    </div>
+  );
+};
+
 function Dashboard() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -355,16 +427,20 @@ function Dashboard() {
   const selectedSectionTitle =
     section === "general"
       ? "General"
-      : section === "system"
-        ? "System"
-        : "Model Library";
+      : section === "transcription"
+        ? "Transcription"
+        : section === "system"
+          ? "System"
+          : "Model Library";
 
   const sectionSummary =
     section === "general"
       ? "Core dictation controls and defaults."
-      : section === "system"
-        ? "Desktop behavior and app-level options."
-        : "Download, activate, and manage speech models.";
+      : section === "transcription"
+        ? "Manage offline transcription models."
+        : section === "system"
+          ? "Desktop behavior and app-level options."
+          : "Download, activate, and manage speech models.";
 
   return (
     <div
@@ -566,6 +642,12 @@ function Dashboard() {
                         onClick={() => setSection("general")}
                       />
                       <LightSettingsNavItem
+                        active={section === "transcription"}
+                        icon={<Mic className="h-4 w-4" />}
+                        label="Transcription"
+                        onClick={() => setSection("transcription")}
+                      />
+                      <LightSettingsNavItem
                         active={section === "system"}
                         icon={<Monitor className="h-4 w-4" />}
                         label="System"
@@ -608,6 +690,23 @@ function Dashboard() {
                           actionLabel="Change"
                         />
                       </div>
+                    )}
+
+                    {section === "transcription" && (
+                         <LightTranscriptionSettings
+                          models={libraryModels.filter(m => 
+                            ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "sherpa-onnx/parakeet-tdt-0.6b-v2-int8"].includes(m.name)
+                          )}
+                          activeModel={activeModel}
+                          onSelectModel={(model) => {
+                             const m = models.find(x => x.name === model);
+                             if (m && !m.downloaded) {
+                                void onDownload(model);
+                             } else {
+                                void onSelectModel(model);
+                             }
+                          }}
+                        />
                     )}
 
                     {section === "models" && (
