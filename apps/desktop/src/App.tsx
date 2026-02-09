@@ -1198,7 +1198,7 @@ function Dashboard() {
                         <LightSettingsRow
                           title="Text formatting"
                           description={
-                            settings.text_formatting_enabled
+                            settings?.text_formatting_enabled
                               ? `Enabled · ${settings.text_formatting_mode.charAt(0).toUpperCase() + settings.text_formatting_mode.slice(1)}`
                               : "Disabled"
                           }
