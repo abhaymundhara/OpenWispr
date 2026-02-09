@@ -960,15 +960,65 @@ pub async fn stop_recording_for_capture(
             let word_count = result.text.split_whitespace().count() as u64;
             crate::store::update_analytics(&app, duration, word_count);
 
+            // Get formatting settings
+            let settings = crate::store::get_settings();
+            let mut final_text = result.text.clone();
+
+            // Apply text formatting if enabled
+            if settings.text_formatting_enabled {
+                if verbose_logs_enabled() {
+                    println!(
+                        "[formatting] enabled with mode: {}",
+                        settings.text_formatting_mode
+                    );
+                }
+
+                // Get active model for formatting
+                let format_model = settings
+                    .system_llm_model
+                    .unwrap_or_else(|| "SmolLM2-135M-Instruct-Q4_K_M".to_string());
+
+                let transcribed_text = result.text.clone();
+                let mode_str = settings.text_formatting_mode.clone();
+
+                // Process text asynchronously using tokio::spawn (we're already in async context)
+                // Use block_in_place to avoid blocking the runtime thread
+                match tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        use text_processor::{FormattingMode, TextProcessor};
+
+                        let mode = FormattingMode::from_str(&mode_str);
+                        let processor = TextProcessor::new(&format_model, mode).await?;
+                        processor.process(&transcribed_text).await
+                    })
+                }) {
+                    Ok(processing_result) => {
+                        final_text = processing_result.formatted_text;
+                        if verbose_logs_enabled() {
+                            println!(
+                                "[formatting] complete in {}ms: {} -> {}",
+                                processing_result.processing_time_ms,
+                                transcribed_text.len(),
+                                final_text.len()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[formatting] failed, using raw text: {}", e);
+                        // Fallback to original text - already set in final_text
+                    }
+                }
+            }
+
             // Paste synchronously BEFORE emitting events to ensure it completes
             if verbose_logs_enabled() {
                 println!(
                     "[paste] attempting to paste {} chars to active window",
-                    result.text.chars().count()
+                    final_text.chars().count()
                 );
             }
 
-            if let Err(err) = paste_text_preserving_clipboard(&result.text) {
+            if let Err(err) = paste_text_preserving_clipboard(&final_text) {
                 eprintln!("[paste] ERROR failed to paste text: {}", err);
             } else if verbose_logs_enabled() {
                 println!("[paste] paste completed successfully");

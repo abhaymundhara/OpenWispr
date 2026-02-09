@@ -330,7 +330,14 @@ interface Settings {
   llm_provider: string | null;
   ollama_base_url: string | null;
   ollama_model: string | null;
-  shortcuts: ShortcutSettings;
+  system_llm_model: string | null;
+  text_formatting_enabled: boolean;
+  text_formatting_mode: string;
+  shortcuts: {
+    push_to_talk: string;
+    hands_free_toggle: string;
+    command_mode: string;
+  };
 }
 
 interface OllamaModel {
@@ -633,6 +640,7 @@ function Dashboard() {
   const [section, setSection] = useState<SettingsSection>("general");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [formattingOpen, setFormattingOpen] = useState(false);
   const [shortcutError, setShortcutError] = useState<string>();
   const [savingShortcuts, setSavingShortcuts] = useState(false);
   const [recordingShortcut, setRecordingShortcut] = useState<ShortcutKeyName | null>(null);
@@ -1186,6 +1194,16 @@ function Dashboard() {
                              await invoke("set_language", { language: next });
                              setSettings(prev => prev ? ({ ...prev, language: next }) : null);
                           }}
+                         />
+                        <LightSettingsRow
+                          title="Text formatting"
+                          description={
+                            settings.text_formatting_enabled
+                              ? `Enabled · ${settings.text_formatting_mode.charAt(0).toUpperCase() + settings.text_formatting_mode.slice(1)}`
+                              : "Disabled"
+                          }
+                          actionLabel="Configure"
+                          onAction={() => setFormattingOpen(true)}
                         />
                       </div>
                     )}
@@ -1366,6 +1384,110 @@ function Dashboard() {
           </AnimatePresence>
         </main>
       </div>
+
+      {/* Text Formatting Modal */}
+      {formattingOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setFormattingOpen(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-4 text-lg font-semibold text-zinc-900">
+              Text Formatting
+            </h3>
+            <p className="mb-6 text-sm text-zinc-600">
+              AI-powered cleanup of transcribed speech using local LLM
+            </p>
+
+            <div className="space-y-4">
+              {/* Enable Toggle */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-zinc-700">
+                  Enable formatting
+                </span>
+                <button
+                  onClick={async () => {
+                    const newValue = !settings?.text_formatting_enabled;
+                    await invoke("set_formatting_settings", {
+                      enabled: newValue,
+                      mode: settings?.text_formatting_mode || "standard",
+                    });
+                    setSettings((prev) =>
+                      prev
+                        ? { ...prev, text_formatting_enabled: newValue }
+                        : null
+                    );
+                  }}
+                  className={`relative h-6 w-11 rounded-full transition-colors ${
+                    settings?.text_formatting_enabled
+                      ? "bg-indigo-600"
+                      : "bg-zinc-300"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      settings?.text_formatting_enabled
+                        ? "translate-x-5"
+                        : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Mode Selector */}
+              {settings?.text_formatting_enabled && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-zinc-700">
+                    Formatting mode
+                  </label>
+                  <select
+                    value={settings.text_formatting_mode}
+                    onChange={async (e) => {
+                      const mode = e.target.value;
+                      await invoke("set_formatting_settings", {
+                        enabled: settings.text_formatting_enabled,
+                        mode,
+                      });
+                      setSettings((prev) =>
+                        prev ? { ...prev, text_formatting_mode: mode } : null
+                      );
+                    }}
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="quick">Quick (Filler + Punctuation)</option>
+                    <option value="standard">
+                      Standard (+ Capitalization)
+                    </option>
+                    <option value="smart">Smart (+ Numbers/Dates)</option>
+                  </select>
+                  <p className="text-xs text-zinc-500">
+                    {settings.text_formatting_mode === "quick" &&
+                      "Removes filler words and adds basic punctuation"}
+                    {settings.text_formatting_mode === "standard" &&
+                      "Quick + proper capitalization"}
+                    {settings.text_formatting_mode === "smart" &&
+                      "Standard + smart number/date formatting"}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setFormattingOpen(false)}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Done
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

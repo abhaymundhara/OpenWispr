@@ -72,7 +72,7 @@ impl Default for Settings {
             ollama_base_url: Some("http://localhost:11434".to_string()),
             ollama_model: None,
             system_llm_model: Some("SmolLM2-135M-Instruct-Q4_K_M".to_string()), // Default to smallest model
-            text_formatting_enabled: true, // Format by default
+            text_formatting_enabled: false, // Disabled by default - STT models already clean up speech
             text_formatting_mode: "standard".to_string(), // Balanced mode
             shortcuts: ShortcutSettings::default(),
         }
