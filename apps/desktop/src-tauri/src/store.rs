@@ -34,9 +34,10 @@ pub struct Settings {
     pub language: Option<String>,
     pub local_transcription_enabled: bool,
     // LLM Settings
-    pub llm_provider: Option<String>, // "ollama"
+    pub llm_provider: Option<String>, // "ollama" or "system"
     pub ollama_base_url: Option<String>,
     pub ollama_model: Option<String>,
+    pub system_llm_model: Option<String>, // For local SmolLM2 models
     pub shortcuts: ShortcutSettings,
 }
 
@@ -64,9 +65,10 @@ impl Default for Settings {
             input_device: None,
             language: Some("en".to_string()),
             local_transcription_enabled: true,
-            llm_provider: Some("ollama".to_string()),
+            llm_provider: Some("system".to_string()), // Default to system (local) provider
             ollama_base_url: Some("http://localhost:11434".to_string()),
             ollama_model: None,
+            system_llm_model: Some("SmolLM2-135M-Instruct-Q4_K_M".to_string()), // Default to smallest model
             shortcuts: ShortcutSettings::default(),
         }
     }
@@ -310,6 +312,16 @@ pub fn set_shortcuts(
     let shortcuts = store.settings.shortcuts.clone();
     save_store(&app, &store);
     Ok(shortcuts)
+}
+
+pub fn get_system_llm_model() -> Option<String> {
+    get_store().settings.system_llm_model
+}
+
+pub fn set_system_llm_model(app: &AppHandle, model: String) {
+    let mut store = get_store();
+    store.settings.system_llm_model = Some(model);
+    save_store(app, &store);
 }
 
 #[tauri::command]

@@ -19,6 +19,7 @@ mod fn_key_macos;
 #[cfg(target_os = "windows")]
 mod fn_key_windows;
 mod llm_client;
+mod llm_manager;
 mod models;
 mod store;
 use audio::AudioCapture;
@@ -224,7 +225,11 @@ fn main() {
             store::get_settings,
             store::set_shortcuts,
             store::set_llm_settings,
-            llm_client::get_ollama_models
+            llm_client::get_ollama_models,
+            llm_manager::list_llm_models,
+            llm_manager::download_llm_model,
+            llm_manager::get_active_llm_model,
+            llm_manager::set_active_llm_model,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

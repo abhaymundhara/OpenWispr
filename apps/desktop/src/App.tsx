@@ -345,6 +345,15 @@ interface OllamaModel {
   };
 }
 
+interface LlmModelInfo {
+  name: string;
+  size_mb: number;
+  downloaded: boolean;
+  description: string;
+  hf_repo: string;
+  filename: string;
+}
+
 const MODEL_SIZE_HINTS: Record<string, string> = {
   tiny: "~75 MB",
   "tiny.en": "~75 MB",
@@ -636,6 +645,10 @@ function Dashboard() {
   // LLM State
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [loadingOllama, setLoadingOllama] = useState(false);
+  
+  // System LLM State (SmolLM2)
+  const [systemLlmModels, setSystemLlmModels] = useState<LlmModelInfo[]>([]);
+  const [systemLlmDownloadProgress, setSystemLlmDownloadProgress] = useState<Record<string, ModelDownloadProgressEvent>>({});
 
   const fetchOllamaModels = async (baseUrl: string) => {
       setLoadingOllama(true);
@@ -660,28 +673,60 @@ function Dashboard() {
       setSettings(prev => prev ? ({ ...prev, llm_provider: provider, ollama_base_url: baseUrl, ollama_model: model }) : null);
   };
 
+  const fetchSystemLlmModels = async () => {
+      try {
+          const models = await invoke<LlmModelInfo[]>("list_llm_models");
+          setSystemLlmModels(models);
+      } catch (e) {
+          setError("Failed to fetch system LLM models: " + e);
+      }
+  };
+
+  const downloadSystemLlmModel = async (modelName: string) => {
+      try {
+          await invoke("download_llm_model", { model: modelName });
+          // Reload models after download
+          await fetchSystemLlmModels();
+      } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+      }
+  };
+
+  const activateSystemLlmModel = async (modelName: string) => {
+      try {
+          await invoke("set_active_llm_model", { model: modelName });
+          setSettings(prev => prev ? ({ ...prev, system_llm_model: modelName }) : null);
+      } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+      }
+  };
+
   const onSettingsOpen = () => {
       if (settings?.ollama_base_url) {
           void fetchOllamaModels(settings.ollama_base_url);
       }
+      // Load system LLM models when settings open
+      void fetchSystemLlmModels();
   };
 
   const loadData = async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const [modelsData, selectedModel, analyticsData, devicesData, settingsData] = await Promise.all([
+      const [modelsData, selectedModel, analyticsData, devicesData, settingsData, systemModelsData] = await Promise.all([
         invoke<ModelInfo[]>("list_models"),
         invoke<string>("get_active_model"),
         invoke<AnalyticsStats>("get_analytics_stats"),
         invoke<AudioDevice[]>("list_input_devices"),
         invoke<Settings>("get_settings"),
+        invoke<LlmModelInfo[]>("list_llm_models"),
       ]);
       setModels(modelsData);
       setActiveModel(selectedModel);
       setAnalytics(analyticsData);
       setInputDevices(devicesData);
       setSettings(settingsData);
+      setSystemLlmModels(systemModelsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -697,34 +742,54 @@ function Dashboard() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenLlmProgress: (() => void) | undefined;
     const setup = async () => {
-      const unlistenProgress = await listen<ModelDownloadProgressEvent>(
-        "model-download-progress",
-        (event) => {
-          const progress = event.payload;
-          setDownloadProgress((prev) => ({
-            ...prev,
-            [progress.model]: progress,
-          }));
-           if (progress.error) {
-            setError(progress.error);
+      try {
+        // Listen for model download progress
+        unlisten = await listen<ModelDownloadProgressEvent>(
+          "model-download-progress",
+          (event) => {
+            const progress = event.payload;
+            setDownloadProgress((prev) => ({
+              ...prev,
+              [progress.model]: progress,
+            }));
           }
-        },
-      );
-      
-      const unlistenAnalytics = await listen<AnalyticsStats>("analytics-update", (e) => {
-          setAnalytics(e.payload);
-      });
+        );
+        
+        // Listen for LLM model download progress
+        unlistenLlmProgress = await listen<ModelDownloadProgressEvent>(
+          "llm-model-download-progress",
+          (event) => {
+            const progress = event.payload;
+            setSystemLlmDownloadProgress((prev) => ({
+              ...prev,
+              [progress.model]: progress,
+            }));
+            // Reload models when download completes
+            if (progress.done && !progress.error) {
+              void fetchSystemLlmModels();
+            }
+          }
+        );
 
-      unlisten = () => {
-          unlistenProgress();
-          unlistenAnalytics();
-      };
+        // Listen for analytics updates
+        unlistenProgress = await listen<AnalyticsStats>(
+          "analytics-update",
+          (event) => {
+            setAnalytics(event.payload);
+          }
+        );
+      } catch (e) {
+        console.error("Failed to setup event listeners", e);
+      }
     };
-
     void setup();
     return () => {
       if (unlisten) unlisten();
+      if (unlistenProgress) unlistenProgress();
+      if (unlistenLlmProgress) unlistenLlmProgress();
     };
   }, []);
 
@@ -1152,16 +1217,17 @@ function Dashboard() {
                            {/* Provider Selection */}
                            <div className="space-y-3">
                                <label className="text-sm font-medium text-zinc-900">LLM Provider</label>
-                               <div className="relative">
-                                   <select
-                                       value={settings?.llm_provider || "ollama"}
-                                       onChange={(e) => updateLlmSettings(e.target.value, settings?.ollama_base_url || "http://localhost:11434", settings?.ollama_model || "")}
-                                       className="w-full appearance-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
-                                   >
-                                       <option value="ollama">Ollama</option>
-                                   </select>
-                                   <ArrowRight className="absolute right-3 top-3 h-4 w-4 rotate-90 text-zinc-400 pointer-events-none" />
-                               </div>
+                                <div className="relative">
+                                    <select
+                                        value={settings?.llm_provider || "system"}
+                                        onChange={(e) => updateLlmSettings(e.target.value, settings?.ollama_base_url || "http://localhost:11434", settings?.ollama_model || "")}
+                                        className="w-full appearance-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+                                    >
+                                        <option value="system">System (Local)</option>
+                                        <option value="ollama">Ollama</option>
+                                    </select>
+                                    <ArrowRight className="absolute right-3 top-3 h-4 w-4 rotate-90 text-zinc-400 pointer-events-none" />
+                                </div>
                            </div>
 
                            {/* Ollama Configuration */}
@@ -1214,11 +1280,66 @@ function Dashboard() {
                                                No models found. Ensure Ollama is running.
                                            </p>
                                        )}
-                                   </div>
-                               </div>
-                           )}
-                       </div>
-                    )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* System (Local) Configuration */}
+                            {settings?.llm_provider === "system" && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="space-y-4">
+                                        {systemLlmModels.map((model) => (
+                                            <div key={model.name} className="rounded-xl border border-zinc-100 bg-zinc-50/50 p-4">
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex-1">
+                                                        <h4 className="text-sm font-semibold text-zinc-900">{model.name}</h4>
+                                                        <p className="mt-1 text-xs text-zinc-500">Quantized GGUF format</p>
+                                                        <p className="mt-1 text-xs text-zinc-400">Size: {model.size_mb} MB</p>
+                                                    </div>
+                                                    <div>
+                                                        {model.downloaded ? (
+                                                            <button
+                                                                onClick={() => activateSystemLlmModel(model.name)}
+                                                                disabled={settings?.system_llm_model === model.name}
+                                                                className="rounded-lg bg-emerald-100 px-3 py-2 text-xs font-medium text-emerald-900 hover:bg-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                {settings?.system_llm_model === model.name ? "Active" : "Activate"}
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => downloadSystemLlmModel(model.name)}
+                                                                disabled={systemLlmDownloadProgress[model.name]?.done === false}
+                                                                className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                {systemLlmDownloadProgress[model.name]?.done === false ? "Downloading..." : "Download"}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {/* Download progress indicator */}
+                                                {systemLlmDownloadProgress[model.name] && !systemLlmDownloadProgress[model.name].done && (
+                                                    <div className="mt-3">
+                                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200">
+                                                            <div
+                                                                className="h-full bg-zinc-900 transition-all duration-300"
+                                                                style={{ width: `${systemLlmDownloadProgress[model.name].percent || 0}%` }}
+                                                            />
+                                                        </div>
+                                                        <p className="mt-1 text-xs text-zinc-500">
+                                                            {systemLlmDownloadProgress[model.name].stage}... {Math.round(systemLlmDownloadProgress[model.name].percent || 0)}%
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-zinc-500">
+                                        💡 System models run locally with hardware acceleration (Metal/CUDA). No internet required after download.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                     )}
 
 
                   </div>

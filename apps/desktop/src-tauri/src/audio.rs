@@ -849,8 +849,8 @@ pub async fn stop_recording_for_capture(
         if verbose_logs_enabled() {
             println!("[stt] no audio captured, skipping transcription");
         }
+        // No audio to process, go idle immediately
         emit_transcription_status(&app, "idle", None);
-        // Let UI hide window
         return Ok(());
     }
 
@@ -974,6 +974,14 @@ pub async fn stop_recording_for_capture(
                 println!("[paste] paste completed successfully");
             }
 
+            // Wait for paste to physically complete (osascript has 80ms delay on macOS)
+            // This ensures the text is actually typed before we emit "idle"
+            #[cfg(target_os = "macos")]
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            
+            #[cfg(not(target_os = "macos"))]
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
             // Now emit result to UI
             let _ = app.emit_all(
                 "transcription-result",
@@ -985,7 +993,7 @@ pub async fn stop_recording_for_capture(
                 },
             );
 
-            // Set idle status
+            // Set idle status AFTER paste is complete
             emit_transcription_status(&app, "idle", None);
 
             if verbose_logs_enabled() {
@@ -998,9 +1006,9 @@ pub async fn stop_recording_for_capture(
             let message = err.to_string();
             eprintln!("[stt] transcription failed: {}", message);
             emit_transcription_status(&app, "error", Some(message.clone()));
-            // Recover into idle so the next dictation cycle can proceed.
-            emit_transcription_status(&app, "idle", None);
-            println!("[stt] error recovery complete, adapter still loaded for next run");
+            // Stay in error state - don't emit idle to avoid pill flickering
+            // The next dictation cycle will reset to listening state
+            println!("[stt] error reported, adapter still loaded for next run");
             Err(message)
         }
     }
