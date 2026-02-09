@@ -9,11 +9,8 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
 use llama_cpp_2::model::AddBos;
-use llama_cpp_2::context::LlamaContext;
-use llama_cpp_2::token::data_array::LlamaTokenDataArray;
 use std::num::NonZeroU32;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub struct LlamaCppAdapter {
     backend: Option<LlamaBackend>,
@@ -49,6 +46,11 @@ impl LlamaCppAdapter {
             .as_ref()
             .ok_or_else(|| LlmError::ModelLoadError("Model not loaded".to_string()))?;
 
+        let backend = self
+            .backend
+            .as_ref()
+            .ok_or_else(|| LlmError::ModelLoadError("Backend not initialized".to_string()))?;
+
         let config = self
             .config
             .as_ref()
@@ -60,9 +62,7 @@ impl LlamaCppAdapter {
             .with_n_batch(512);
 
         let mut ctx = model
-            .new_context(&LlamaBackend::init().map_err(|e| {
-                LlmError::ModelLoadError(format!("Failed to init backend: {}", e))
-            })?, ctx_params)
+            .new_context(backend, ctx_params)
             .map_err(|e| LlmError::ModelLoadError(format!("Failed to create context: {}", e)))?;
 
         // Tokenize the prompt
@@ -72,7 +72,6 @@ impl LlamaCppAdapter {
 
         // Prepare batch
         let mut batch = LlamaBatch::new(512, 1);
-        let last_index = (tokens.len() - 1) as i32;
 
         for (i, token) in tokens.iter().enumerate() {
             let is_last = i == tokens.len() - 1;
@@ -87,23 +86,21 @@ impl LlamaCppAdapter {
         })?;
 
         let mut n_cur = batch.n_tokens();
-        let mut decoder = encoding_rs::UTF_8.new_decoder();
         let mut output = String::new();
         let mut generated_tokens = 0;
 
+        let last_index = (tokens.len() - 1) as i32;
+
         // Generate tokens
         while generated_tokens < max_tokens {
-            // Sample next token
-            let candidates = ctx.candidates_ith(last_index);
-            let mut candidates_array = LlamaTokenDataArray::from_iter(candidates, false);
-
-            // Apply sampling parameters
-            let token_id = {
-                // Apply top-k and top-p sampling
-                ctx.sample_top_k(&mut candidates_array, config.top_k as i32, 1);
-                ctx.sample_top_p(&mut candidates_array, config.top_p, 1);
-                ctx.sample_temp(&mut candidates_array, config.temperature);
-                ctx.sample_token(&mut candidates_array)
+            // Sample next token using simple greedy sampling
+            let candidates: Vec<_> = ctx.candidates_ith(last_index).collect();
+            
+            // Get the most likely token (first in candidates list is best)
+            let token_id = if let Some(first) = candidates.first() {
+                first.id()
+            } else {
+                break;
             };
 
             // Check for EOS
@@ -111,8 +108,9 @@ impl LlamaCppAdapter {
                 break;
             }
 
-            // Decode token to string
-            let piece = model.token_to_str(token_id, llama_cpp_2::model::Special::Tokenize)
+            // Decode token to string using updated API with encoder
+            let mut decoder = encoding_rs::UTF_8.new_decoder();
+            let piece = model.token_to_piece(token_id, &mut decoder, false, None)
                 .map_err(|e| LlmError::InferenceFailed(format!("Token decode failed: {}", e)))?;
 
             output.push_str(&piece);

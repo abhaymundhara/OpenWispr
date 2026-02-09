@@ -31,6 +31,9 @@ pub enum LlmError {
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+    
+    #[error("Model error: {0}")]
+    ModelError(#[from] models::ModelError),
 }
 
 pub type Result<T> = std::result::Result<T, LlmError>;

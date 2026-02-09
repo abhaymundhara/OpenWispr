@@ -25,7 +25,6 @@ struct FnHoldState {
     meta_down: bool,
     pressed_keys: HashSet<String>,
     keycode_tokens: HashMap<i64, String>,
-    fn_hardware_supported: bool,
     is_push_active: bool,
     is_hands_free: bool,
     is_recording_active: bool,
@@ -202,20 +201,16 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
     let flags = CGEvent::flags(Some(event_ref));
     update_non_fn_modifier_state_from_flags(state, flags);
 
-    let hardware_fn_down =
-        CGEventSource::key_state(CGEventSourceStateID::HIDSystemState, FN_KEYCODE);
-    if hardware_fn_down {
-        state.fn_hardware_supported = true;
-    }
-    if state.fn_hardware_supported {
-        state.fn_down = hardware_fn_down;
-    } else if event_type == CGEventType::FlagsChanged {
+    if event_type == CGEventType::FlagsChanged {
         let keycode =
             CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
         // Only trust Fn state when the actual Fn key emits a FlagsChanged event.
-        // This avoids false positives from special keys (e.g. dictation/mic).
+        // Also cross-check global HID flags to ignore transient false release pulses.
         if keycode == i64::from(FN_KEYCODE) {
-            state.fn_down = flags.contains(CGEventFlags::MaskSecondaryFn);
+            let event_fn_down = flags.contains(CGEventFlags::MaskSecondaryFn);
+            let global_fn_down = CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState)
+                .contains(CGEventFlags::MaskSecondaryFn);
+            state.fn_down = event_fn_down || global_fn_down;
         }
     }
 
@@ -269,7 +264,6 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
             meta_down: false,
             pressed_keys: HashSet::new(),
             keycode_tokens: HashMap::new(),
-            fn_hardware_supported: false,
             is_push_active: false,
             is_hands_free: false,
             is_recording_active: false,
