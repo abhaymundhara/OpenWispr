@@ -55,6 +55,7 @@ models/
 *.gguf
 
 # Build artifacts
+src-inspo/
 /apps/desktop/dist/
 comparison.md
 apps/desktop/src-tauri/Cargo.toml

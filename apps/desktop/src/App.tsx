@@ -6,6 +6,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
   Download,
+  LayoutGrid, // Added
+  BarChart3, // Added
   House,
   BookText,
   Scissors,
@@ -28,7 +30,6 @@ import {
   Hash,
   Settings2,
 } from "lucide-react";
-
 // --- Types ---
 
 interface ModelInfo {
@@ -125,10 +126,14 @@ const AppNavItem = ({ active, icon, label, onClick }: AppNavItemProps) => (
   <button
     onClick={onClick}
     className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[1.02rem] transition-colors ${
-      active ? "bg-white/[0.12] text-white" : "text-white/78 hover:bg-white/[0.06]"
+      active
+        ? "bg-white/[0.12] text-white"
+        : "text-white/78 hover:bg-white/[0.06]"
     }`}
   >
-    <span className={`${active ? "text-white/95" : "text-white/65"}`}>{icon}</span>
+    <span className={`${active ? "text-white/95" : "text-white/65"}`}>
+      {icon}
+    </span>
     <span>{label}</span>
   </button>
 );
@@ -140,14 +145,23 @@ type SettingsNavItemProps = {
   onClick: () => void;
 };
 
-const SettingsNavItem = ({ active, icon, label, onClick }: SettingsNavItemProps) => (
+const SettingsNavItem = ({
+  active,
+  icon,
+  label,
+  onClick,
+}: SettingsNavItemProps) => (
   <button
     onClick={onClick}
     className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[1.02rem] transition-colors ${
-      active ? "bg-white/[0.10] text-white" : "text-white/72 hover:bg-white/[0.06]"
+      active
+        ? "bg-white/[0.10] text-white"
+        : "text-white/72 hover:bg-white/[0.06]"
     }`}
   >
-    <span className={`${active ? "text-white/92" : "text-white/62"}`}>{icon}</span>
+    <span className={`${active ? "text-white/92" : "text-white/62"}`}>
+      {icon}
+    </span>
     <span>{label}</span>
   </button>
 );
@@ -283,7 +297,9 @@ function Dashboard() {
   const downloadedModels = models.filter((m) => m.downloaded);
   const activeModelInfo = models.find((m) => m.name === activeModel);
   const libraryModels = models.filter((m) => m.can_download);
-  const installableModels = models.filter((m) => m.can_download && !m.downloaded);
+  const installableModels = models.filter(
+    (m) => m.can_download && !m.downloaded,
+  );
   const selectedSectionTitle =
     section === "general"
       ? "General"
@@ -315,21 +331,15 @@ function Dashboard() {
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_8%,rgba(255,255,255,0.10)_0%,transparent_38%),radial-gradient(circle_at_92%_6%,rgba(143,178,218,0.12)_0%,transparent_30%),linear-gradient(160deg,#0a0b0e_0%,#111317_45%,#0a0b0d_100%)]" />
 
-      <header
-        className="absolute right-4 top-3 z-20 flex items-center gap-2"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-      >
-        <button className="grid h-8 w-8 place-items-center rounded-lg text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white/90">
-          <Bell className="h-4.5 w-4.5" />
-        </button>
-        <button className="grid h-8 w-8 place-items-center rounded-lg text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white/90">
-          <UserRound className="h-4.5 w-4.5" />
-        </button>
-      </header>
+      {/* Global Drag Region */}
+      <div
+        className="absolute left-0 right-0 top-0 h-10 z-10"
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+      />
 
       <div className="relative flex h-full">
         <aside
-          className="hidden w-[14.5rem] border-r border-white/10 bg-black/20 px-2 pb-3 pt-6 backdrop-blur-xl sm:flex sm:flex-col"
+          className="hidden w-[14.5rem] border-r border-white/10 bg-black/20 px-2 pb-3 pt-10 backdrop-blur-xl sm:flex sm:flex-col"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
           <div className="mb-6 px-2">
@@ -337,7 +347,9 @@ function Dashboard() {
               <div className="grid h-6 w-6 place-items-center rounded-md bg-white/[0.08]">
                 <Library className="h-3.5 w-3.5 text-white/90" />
               </div>
-              <p className="text-[2rem] font-semibold leading-none tracking-tight">Flow</p>
+              <p className="text-[2rem] font-semibold leading-none tracking-tight">
+                OpenWispr
+              </p>
               <span className="rounded-md border border-white/25 px-2 py-0.5 text-[0.9rem] text-white/78">
                 Local
               </span>
@@ -347,39 +359,36 @@ function Dashboard() {
           <div className="space-y-1">
             <AppNavItem
               active={!settingsOpen}
-              icon={<House className="h-[1.05rem] w-[1.05rem]" />}
-              label="Home"
+              icon={<LayoutGrid className="h-[1.05rem] w-[1.05rem]" />}
+              label="Dashboard"
               onClick={() => setSettingsOpen(false)}
+            />
+            <AppNavItem
+              icon={<BarChart3 className="h-[1.05rem] w-[1.05rem]" />}
+              label="Analytics"
             />
             <AppNavItem
               icon={<BookText className="h-[1.05rem] w-[1.05rem]" />}
               label="Dictionary"
             />
-            <AppNavItem
-              icon={<Scissors className="h-[1.05rem] w-[1.05rem]" />}
-              label="Snippets"
-            />
-            <AppNavItem
-              icon={<Type className="h-[1.05rem] w-[1.05rem]" />}
-              label="Style"
-            />
-            <AppNavItem
-              icon={<NotebookPen className="h-[1.05rem] w-[1.05rem]" />}
-              label="Notes"
-            />
           </div>
 
-          <div className="mt-auto space-y-1 border-t border-white/10 pt-3">
-            <AppNavItem
-              active={settingsOpen}
-              icon={<Settings2 className="h-[1.05rem] w-[1.05rem]" />}
-              label="Settings"
-              onClick={() => {
-                setSection("general");
-                setSettingsOpen(true);
-              }}
-            />
-            <AppNavItem icon={<CircleHelp className="h-[1.05rem] w-[1.05rem]" />} label="Help" />
+          <div className="mt-auto">
+            <div className="space-y-1 border-t border-white/10 pt-3">
+              <AppNavItem
+                active={settingsOpen}
+                icon={<Settings2 className="h-[1.05rem] w-[1.05rem]" />}
+                label="Settings"
+                onClick={() => {
+                  setSection("general");
+                  setSettingsOpen(true);
+                }}
+              />
+              <AppNavItem
+                icon={<CircleHelp className="h-[1.05rem] w-[1.05rem]" />}
+                label="Help"
+              />
+            </div>
           </div>
         </aside>
 
@@ -387,66 +396,106 @@ function Dashboard() {
           className="relative flex flex-1 overflow-hidden p-3 sm:p-5"
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
-          <div className="h-full w-full rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-5 backdrop-blur-lg">
-            <div className="mb-4 flex items-center justify-between">
+          <div className="flex h-full w-full flex-col rounded-[1.2rem] border border-white/10 bg-white/[0.03] p-8 backdrop-blur-lg">
+            <div className="mb-0 flex items-center justify-between">
               <div>
-                <p className="text-[0.82rem] uppercase tracking-[0.16em] text-white/48">Home</p>
-                <h1 className="text-[2rem] font-semibold leading-tight text-white/96">OpenWispr</h1>
-              </div>
-              <CleanButton
-                onClick={() => {
-                  setSection("general");
-                  setSettingsOpen(true);
-                }}
-              >
-                Open Settings
-              </CleanButton>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <p className="text-[0.78rem] uppercase tracking-[0.16em] text-white/48">Installed</p>
-                <p className="mt-2 text-[1.7rem] font-semibold text-white/96">{downloadedModels.length}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <p className="text-[0.78rem] uppercase tracking-[0.16em] text-white/48">Available</p>
-                <p className="mt-2 text-[1.7rem] font-semibold text-white/96">{installableModels.length}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <p className="text-[0.78rem] uppercase tracking-[0.16em] text-white/48">Active runtime</p>
-                <p className="mt-2 truncate text-[1.1rem] font-semibold text-white/96">
-                  {activeModelInfo?.runtime ?? "None"}
+                <h1 className="text-xl font-medium text-white/96">
+                  Good evening, Abhay
+                </h1>
+                <p className="mt-1 text-sm text-white/58">
+                  Press{" "}
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 font-sans text-xs font-medium text-white/80">
+                    Fn
+                  </kbd>{" "}
+                  in any text box to start dictating
                 </p>
-                <p className="mt-1 truncate text-[0.9rem] text-white/58">{activeModelInfo?.name ?? "No active model"}</p>
+              </div>
+              <div className="flex gap-2">
+                <button className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-white/5 text-white/65 transition-colors hover:bg-white/10 hover:text-white/90">
+                  <CircleHelp className="h-4 w-4" />
+                </button>
+                <button className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-white/5 text-white/65 transition-colors hover:bg-white/10 hover:text-white/90">
+                  <ArrowRight className="h-4 w-4" />
+                </button>
               </div>
             </div>
 
-            <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
-              <p className="mb-3 text-[0.86rem] uppercase tracking-[0.16em] text-white/48">Installed models</p>
-              <div className="space-y-2">
-                {downloadedModels.length === 0 && (
-                  <p className="text-white/60">No downloaded models yet.</p>
-                )}
-                {downloadedModels.map((model) => {
-                  const isActive = activeModel === model.name;
-                  return (
-                    <div key={model.name} className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5">
-                      <div>
-                        <p className="text-[1rem] font-medium text-white/92">{model.name}</p>
-                        <p className="text-[0.9rem] text-white/56">{MODEL_SIZE_HINTS[model.name] || "Unknown size"} · {model.runtime ?? "whisper.cpp"}</p>
-                      </div>
-                      <CleanButton
-                        onClick={() => {
-                          if (!isActive) void onSelectModel(model.name);
-                        }}
-                        disabled={isActive}
-                        className="min-w-[8rem]"
-                      >
-                        {isActive ? "Active" : "Activate"}
-                      </CleanButton>
+            <div className="mt-8">
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#16181d] px-8 py-10 shadow-lg">
+                <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 opacity-20">
+                  <div className="h-32 w-32 rounded-full bg-blue-500 blur-3xl"></div>
+                </div>
+                <div className="relative z-10 flex items-center justify-between">
+                  <div>
+                    <div className="flex items-baseline gap-3">
+                      <span className="text-5xl font-semibold tracking-tight text-white/96">
+                        11 mins
+                      </span>
+                      <span className="text-lg text-white/58">
+                        lifetime saved
+                      </span>
                     </div>
-                  );
-                })}
+                    <div className="mt-2 text-sm text-white/40">
+                      38 sessions • all time
+                    </div>
+                  </div>
+                  <div className="flex h-2 w-2 rounded-full bg-white/20"></div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-8 grid grid-cols-3 gap-12 px-2">
+              <div className="text-center">
+                <div className="text-4xl font-semibold tracking-tight text-white/96">
+                  1
+                </div>
+                <div className="mt-1 text-sm font-medium text-white/58">
+                  Day Streak
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-4xl font-semibold tracking-tight text-white/96">
+                  165
+                </div>
+                <div className="mt-1 text-sm font-medium text-white/58">
+                  Avg WPM
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-4xl font-semibold tracking-tight text-white/96">
+                  384
+                </div>
+                <div className="mt-1 text-sm font-medium text-white/58">
+                  Words
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-12">
+              <h3 className="mb-4 text-base font-medium text-white/90">
+                Quick Actions
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                <button className="group relative flex flex-col justify-between rounded-xl border border-white/10 bg-white/[0.03] p-5 text-left transition-all hover:bg-white/[0.06] hover:border-white/15 active:scale-[0.99]">
+                  <div>
+                    <h4 className="text-base font-medium text-white/90 group-hover:text-white">
+                      View Analytics
+                    </h4>
+                    <p className="mt-1 text-sm text-white/50 group-hover:text-white/60">
+                      Detailed insights
+                    </p>
+                  </div>
+                </button>
+                <button className="group relative flex flex-col justify-between rounded-xl border border-white/10 bg-white/[0.03] p-5 text-left transition-all hover:bg-white/[0.06] hover:border-white/15 active:scale-[0.99]">
+                  <div>
+                    <h4 className="text-base font-medium text-white/90 group-hover:text-white">
+                      Custom Dictionary
+                    </h4>
+                    <p className="mt-1 text-sm text-white/50 group-hover:text-white/60">
+                      Manage words
+                    </p>
+                  </div>
+                </button>
               </div>
             </div>
           </div>
@@ -469,7 +518,9 @@ function Dashboard() {
                     <div className="space-y-1">
                       <SettingsNavItem
                         active={section === "general"}
-                        icon={<SlidersHorizontal className="h-[1.05rem] w-[1.05rem]" />}
+                        icon={
+                          <SlidersHorizontal className="h-[1.05rem] w-[1.05rem]" />
+                        }
                         label="General"
                         onClick={() => setSection("general")}
                       />
@@ -507,13 +558,17 @@ function Dashboard() {
                       />
                       <SettingsNavItem
                         active={section === "billing"}
-                        icon={<CreditCard className="h-[1.05rem] w-[1.05rem]" />}
+                        icon={
+                          <CreditCard className="h-[1.05rem] w-[1.05rem]" />
+                        }
                         label="Plans and Billing"
                         onClick={() => setSection("billing")}
                       />
                       <SettingsNavItem
                         active={section === "privacy"}
-                        icon={<ShieldCheck className="h-[1.05rem] w-[1.05rem]" />}
+                        icon={
+                          <ShieldCheck className="h-[1.05rem] w-[1.05rem]" />
+                        }
                         label="Data and Privacy"
                         onClick={() => setSection("privacy")}
                       />
@@ -526,9 +581,14 @@ function Dashboard() {
                         <h2 className="text-[2rem] font-semibold tracking-tight text-white/96">
                           {selectedSectionTitle}
                         </h2>
-                        <p className="mt-1 text-[1.02rem] text-white/62">{sectionSummary}</p>
+                        <p className="mt-1 text-[1.02rem] text-white/62">
+                          {sectionSummary}
+                        </p>
                       </div>
-                      <CleanButton onClick={() => setSettingsOpen(false)} className="min-w-[7rem]">
+                      <CleanButton
+                        onClick={() => setSettingsOpen(false)}
+                        className="min-w-[7rem]"
+                      >
                         Close
                       </CleanButton>
                     </div>
@@ -604,11 +664,15 @@ function Dashboard() {
 
                             {libraryModels.map((model) => {
                               const isActive = activeModel === model.name;
-                              const isDownloading = activeDownload === model.name;
+                              const isDownloading =
+                                activeDownload === model.name;
                               const busy = !!activeDownload && !isDownloading;
                               const percent =
-                                typeof downloadProgress[model.name]?.percent === "number"
-                                  ? Math.round(downloadProgress[model.name].percent ?? 0)
+                                typeof downloadProgress[model.name]?.percent ===
+                                "number"
+                                  ? Math.round(
+                                      downloadProgress[model.name].percent ?? 0,
+                                    )
                                   : 0;
 
                               return (
@@ -618,18 +682,18 @@ function Dashboard() {
                                   title={model.name}
                                   description={`${MODEL_SIZE_HINTS[model.name] || "Unknown size"} · ${model.runtime ?? "whisper.cpp"}`}
                                   actionLabel={
-                                    isActive
-                                      ? "Active"
-                                      : isDownloading
-                                        ? (
-                                            <span className="inline-flex items-center gap-2">
-                                              <LoaderCircle className="h-4 w-4 animate-spin" />
-                                              {percent}%
-                                            </span>
-                                          )
-                                        : model.downloaded
-                                          ? "Activate"
-                                          : "Download"
+                                    isActive ? (
+                                      "Active"
+                                    ) : isDownloading ? (
+                                      <span className="inline-flex items-center gap-2">
+                                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                                        {percent}%
+                                      </span>
+                                    ) : model.downloaded ? (
+                                      "Activate"
+                                    ) : (
+                                      "Download"
+                                    )
                                   }
                                   onAction={() => {
                                     if (isActive || busy) return;
@@ -655,7 +719,8 @@ function Dashboard() {
                               {selectedSectionTitle}
                             </p>
                             <p className="mt-2 text-[0.98rem] text-white/58">
-                              This section is planned. Core dictation and model controls are live now.
+                              This section is planned. Core dictation and model
+                              controls are live now.
                             </p>
                           </div>
                         )}
