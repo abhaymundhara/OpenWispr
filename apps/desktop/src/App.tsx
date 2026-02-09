@@ -200,6 +200,65 @@ const SettingsRow = ({
   </div>
 );
 
+// --- Light Theme Settings Components ---
+
+const LightSettingsNavItem = ({
+  active,
+  icon,
+  label,
+  onClick,
+}: {
+  active?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+}) => (
+  <button
+    onClick={onClick}
+    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[0.92rem] font-medium transition-colors ${
+      active
+        ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200"
+        : "text-zinc-500 hover:bg-zinc-200/50 hover:text-zinc-700"
+    }`}
+  >
+    <span className={active ? "text-zinc-900" : "text-zinc-400"}>{icon}</span>
+    <span>{label}</span>
+  </button>
+);
+
+const LightSettingsRow = ({
+  title,
+  description,
+  actionLabel,
+  onAction,
+  className,
+}: {
+  title: string;
+  description: string;
+  actionLabel?: React.ReactNode;
+  onAction?: () => void;
+  className?: string;
+}) => (
+  <div
+    className={`flex items-start justify-between py-5 ${className ?? "border-b border-zinc-100 last:border-0"}`}
+  >
+    <div className="pr-4">
+      <h4 className="text-[0.95rem] font-semibold text-zinc-900">{title}</h4>
+      <p className="mt-0.5 text-[0.85rem] leading-relaxed text-zinc-500">
+        {description}
+      </p>
+    </div>
+    {actionLabel && (
+      <button
+        onClick={onAction}
+        className="inline-flex h-8 min-w-[5rem] items-center justify-center rounded-lg bg-zinc-100 px-3 text-[0.85rem] font-medium text-zinc-900 transition-colors hover:bg-zinc-200"
+      >
+        {actionLabel}
+      </button>
+    )}
+  </div>
+);
+
 function Dashboard() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -497,235 +556,181 @@ function Dashboard() {
             </div>
           </div>
 
+
+
           {settingsOpen && (
             <div
-              className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-3 sm:p-5"
+              className="absolute inset-0 z-50 flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm"
               onClick={() => setSettingsOpen(false)}
             >
-              <div
-                className="h-[min(90vh,760px)] w-full max-w-[1110px] rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-3 shadow-[0_30px_70px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-4"
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.1 }}
+                className="flex h-[85vh] max-h-[700px] w-full max-w-[960px] overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="grid h-full overflow-hidden rounded-[1.15rem] border border-white/10 bg-[#13151a]/95 sm:grid-cols-[16.8rem_1fr]">
-                  <section className="border-b border-white/10 bg-white/[0.02] px-3 py-3 sm:border-b-0 sm:border-r sm:px-4 sm:py-5">
-                    <p className="mb-3 text-[0.84rem] font-semibold uppercase tracking-[0.16em] text-white/48">
+                {/* Sidebar */}
+                <aside className="w-[260px] flex-none bg-zinc-50/80 px-4 py-5 backdrop-blur-xl">
+                  <div className="mb-6 px-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                       Settings
                     </p>
-
-                    <div className="space-y-1">
-                      <SettingsNavItem
+                    <div className="mt-2 space-y-0.5">
+                      <LightSettingsNavItem
                         active={section === "general"}
-                        icon={
-                          <SlidersHorizontal className="h-[1.05rem] w-[1.05rem]" />
-                        }
+                        icon={<SlidersHorizontal className="h-4 w-4" />}
                         label="General"
                         onClick={() => setSection("general")}
                       />
-                      <SettingsNavItem
+                      <LightSettingsNavItem
                         active={section === "system"}
-                        icon={<Monitor className="h-[1.05rem] w-[1.05rem]" />}
+                        icon={<Monitor className="h-4 w-4" />}
                         label="System"
                         onClick={() => setSection("system")}
                       />
-                      <SettingsNavItem
+                      <LightSettingsNavItem
                         active={section === "models"}
-                        icon={<Hash className="h-[1.05rem] w-[1.05rem]" />}
-                        label="Models"
+                        icon={<Hash className="h-4 w-4" />}
+                        label="Vibe coding"
                         onClick={() => setSection("models")}
                       />
                     </div>
+                  </div>
 
-                    <div className="my-4 h-px bg-white/10" />
-
-                    <p className="mb-2 text-[0.84rem] font-semibold uppercase tracking-[0.16em] text-white/48">
+                  <div className="px-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                       Account
                     </p>
-                    <div className="space-y-1">
-                      <SettingsNavItem
+                    <div className="mt-2 space-y-0.5">
+                      <LightSettingsNavItem
                         active={section === "account"}
-                        icon={<UserRound className="h-[1.05rem] w-[1.05rem]" />}
+                        icon={<UserRound className="h-4 w-4" />}
                         label="Account"
                         onClick={() => setSection("account")}
                       />
-                      <SettingsNavItem
+                      <LightSettingsNavItem
                         active={section === "team"}
-                        icon={<Users className="h-[1.05rem] w-[1.05rem]" />}
+                        icon={<Users className="h-4 w-4" />}
                         label="Team"
                         onClick={() => setSection("team")}
                       />
-                      <SettingsNavItem
+                      <LightSettingsNavItem
                         active={section === "billing"}
-                        icon={
-                          <CreditCard className="h-[1.05rem] w-[1.05rem]" />
-                        }
+                        icon={<CreditCard className="h-4 w-4" />}
                         label="Plans and Billing"
                         onClick={() => setSection("billing")}
                       />
-                      <SettingsNavItem
+                      <LightSettingsNavItem
                         active={section === "privacy"}
-                        icon={
-                          <ShieldCheck className="h-[1.05rem] w-[1.05rem]" />
-                        }
+                        icon={<ShieldCheck className="h-4 w-4" />}
                         label="Data and Privacy"
                         onClick={() => setSection("privacy")}
                       />
                     </div>
-                  </section>
+                  </div>
 
-                  <section className="min-h-0 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
-                    <div className="mb-4 sm:mb-5 flex items-start justify-between gap-3">
-                      <div>
-                        <h2 className="text-[2rem] font-semibold tracking-tight text-white/96">
-                          {selectedSectionTitle}
-                        </h2>
-                        <p className="mt-1 text-[1.02rem] text-white/62">
-                          {sectionSummary}
-                        </p>
+
+                </aside>
+
+                {/* Content */}
+                <main className="flex-1 overflow-y-auto bg-white px-8 py-8">
+                  <div className="mx-auto max-w-2xl">
+                    <h2 className="mb-6 text-2xl font-semibold text-zinc-900">
+                      {selectedSectionTitle}
+                    </h2>
+
+                    {section === "general" && (
+                      <div className="divide-y divide-zinc-100">
+                        <LightSettingsRow
+                          title="Keyboard shortcuts"
+                          description="Hold fn and speak. Learn more ➜"
+                          actionLabel="Change"
+                        />
+                        <LightSettingsRow
+                          title="Microphone"
+                          description="Built-in mic (recommended)"
+                          actionLabel="Change"
+                        />
+                         <LightSettingsRow
+                          title="Languages"
+                          description="English · Hinglish"
+                          actionLabel="Change"
+                        />
                       </div>
-                      <CleanButton
-                        onClick={() => setSettingsOpen(false)}
-                        className="min-w-[7rem]"
-                      >
-                        Close
-                      </CleanButton>
-                    </div>
-
-                    {error && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="mb-4 rounded-xl border border-[#7C3436] bg-[#3A1618]/70 px-4 py-3 text-sm text-[#F7D9D9]"
-                      >
-                        {error}
-                      </motion.div>
                     )}
 
-                    {loading && models.length === 0 ? (
-                      <div className="space-y-2">
-                        {[...Array(4)].map((_, idx) => (
-                          <div
-                            key={`skeleton-${idx}`}
-                            className="h-[4.75rem] animate-pulse rounded-xl border border-white/10 bg-white/[0.03]"
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <>
-                        {(section === "general" || section === "system") && (
-                          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 sm:px-5">
-                            <SettingsRow
-                              title="Keyboard shortcuts"
-                              description="Hold Fn and speak. Learn more soon."
-                              actionLabel="Change"
-                            />
-                            <SettingsRow
-                              title="Microphone"
-                              description="Use your system default input device."
-                              actionLabel="Change"
-                            />
-                            <SettingsRow
-                              title="Languages"
-                              description="English (auto detect planned)."
-                              actionLabel="Change"
-                            />
-                            <SettingsRow
-                              title="Active model"
-                              description={
-                                activeModelInfo
-                                  ? `${activeModelInfo.name} · ${activeModelInfo.runtime ?? "whisper.cpp"}`
-                                  : "No model selected"
-                              }
-                              actionLabel="Choose"
-                              onAction={() => setSection("models")}
-                            />
+                    {section === "models" && (
+                       <div className="space-y-6">
+                          <div className="rounded-lg border border-zinc-100 bg-zinc-50/50 p-4">
+                            <h4 className="mb-2 text-sm font-medium text-zinc-900">Active Model</h4>
+                            <div className="flex items-center justify-between">
+                               <div>
+                                  <p className="text-sm text-zinc-700 font-medium">{activeModelInfo?.name || "None selected"}</p>
+                                  <p className="text-xs text-zinc-500">{activeModelInfo?.size ? MODEL_SIZE_HINTS[activeModelInfo.name] : ""} · {activeModelInfo?.runtime || "whisper.cpp"}</p>
+                               </div>
+                               <div className="flex items-center text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                                  <CheckCircle2 className="mr-1 h-3 w-3" />
+                                  Active
+                               </div>
+                            </div>
                           </div>
-                        )}
+                      
+                          <div>
+                            <h4 className="mb-3 text-sm font-medium text-zinc-900">Available Models</h4>
+                            <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+                              {libraryModels.map((model) => {
+                                const isActive = activeModel === model.name;
+                                const isDownloading = activeDownload === model.name;
+                                const percent = typeof downloadProgress[model.name]?.percent === "number"
+                                    ? Math.round(downloadProgress[model.name].percent ?? 0)
+                                    : 0;
 
-                        {section === "models" && (
-                          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 sm:px-5">
-                            <SettingsRow
-                              compact
-                              title="Installed models"
-                              description={`${downloadedModels.length} installed`}
-                              actionLabel={
-                                <span className="inline-flex items-center gap-2">
-                                  Refresh
-                                  <ArrowRight className="h-4 w-4" />
-                                </span>
-                              }
-                              onAction={() => {
-                                void loadModels();
-                              }}
-                              actionDisabled={loading}
-                            />
-
-                            {libraryModels.map((model) => {
-                              const isActive = activeModel === model.name;
-                              const isDownloading =
-                                activeDownload === model.name;
-                              const busy = !!activeDownload && !isDownloading;
-                              const percent =
-                                typeof downloadProgress[model.name]?.percent ===
-                                "number"
-                                  ? Math.round(
-                                      downloadProgress[model.name].percent ?? 0,
-                                    )
-                                  : 0;
-
-                              return (
-                                <SettingsRow
-                                  key={model.name}
-                                  compact
-                                  title={model.name}
-                                  description={`${MODEL_SIZE_HINTS[model.name] || "Unknown size"} · ${model.runtime ?? "whisper.cpp"}`}
-                                  actionLabel={
-                                    isActive ? (
-                                      "Active"
-                                    ) : isDownloading ? (
-                                      <span className="inline-flex items-center gap-2">
-                                        <LoaderCircle className="h-4 w-4 animate-spin" />
-                                        {percent}%
-                                      </span>
-                                    ) : model.downloaded ? (
-                                      "Activate"
-                                    ) : (
-                                      "Download"
-                                    )
-                                  }
-                                  onAction={() => {
-                                    if (isActive || busy) return;
-                                    if (model.downloaded) {
-                                      void onSelectModel(model.name);
-                                    } else {
-                                      void onDownload(model.name);
-                                    }
-                                  }}
-                                  actionDisabled={isActive || busy}
-                                />
-                              );
-                            })}
+                                return (
+                                  <div key={model.name} className="flex items-center justify-between p-4 bg-white first:rounded-t-lg last:rounded-b-lg">
+                                     <div>
+                                        <p className="text-sm font-medium text-zinc-900">{model.name}</p>
+                                        <p className="text-xs text-zinc-500">{MODEL_SIZE_HINTS[model.name] || "Unknown size"}</p>
+                                     </div>
+                                     <div>
+                                        {isActive ? (
+                                           <span className="text-xs font-medium text-zinc-400">Installed</span>
+                                        ) : isDownloading ? (
+                                            <span className="inline-flex items-center gap-2 text-xs font-medium text-blue-600">
+                                              <LoaderCircle className="h-3 w-3 animate-spin" />
+                                              {percent}%
+                                            </span>
+                                        ) : model.downloaded ? (
+                                           <button onClick={() => onSelectModel(model.name)} className="text-xs font-medium text-zinc-900 hover:underline">Activate</button>
+                                        ) : (
+                                           <button onClick={() => onDownload(model.name)} className="rounded bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-zinc-800">Download</button>
+                                        )}
+                                     </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
                           </div>
-                        )}
-
-                        {(section === "account" ||
-                          section === "team" ||
-                          section === "billing" ||
-                          section === "privacy") && (
-                          <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-8 text-center">
-                            <p className="text-[1.1rem] font-medium text-white/92">
-                              {selectedSectionTitle}
-                            </p>
-                            <p className="mt-2 text-[0.98rem] text-white/58">
-                              This section is planned. Core dictation and model
-                              controls are live now.
-                            </p>
-                          </div>
-                        )}
-                      </>
+                       </div>
                     )}
-                  </section>
-                </div>
-              </div>
+                    
+                    {(section === "account" || section === "billing" || section === "team" || section === "privacy") && (
+                       <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 text-center">
+                          <div className="rounded-full bg-zinc-100 p-3">
+                             {section === "account" && <UserRound className="h-6 w-6 text-zinc-400" />}
+                             {section === "billing" && <CreditCard className="h-6 w-6 text-zinc-400" />}
+                             {section === "team" && <Users className="h-6 w-6 text-zinc-400" />}
+                             {section === "privacy" && <ShieldCheck className="h-6 w-6 text-zinc-400" />}
+                          </div>
+                          <h3 className="mt-3 text-sm font-medium text-zinc-900">Coming Soon</h3>
+                          <p className="mt-1 text-xs text-zinc-500">This section is under development.</p>
+                       </div>
+                    )}
+
+                  </div>
+                </main>
+              </motion.div>
             </div>
           )}
         </main>
