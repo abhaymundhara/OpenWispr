@@ -26,7 +26,101 @@ import {
   LoaderCircle,
   Hash,
   Settings2,
+  X,
+  Pencil,
+  Command,
 } from "lucide-react";
+
+const ShortcutKey = ({ children }: { children: React.ReactNode }) => (
+  <kbd className="min-w-[20px] justify-center flex items-center h-6 rounded border border-zinc-200 bg-zinc-50 px-1.5 font-sans text-[11px] font-medium text-zinc-500">
+    {children}
+  </kbd>
+);
+
+const ShortcutRow = ({
+  title,
+  description,
+  keys,
+  onEdit,
+}: {
+  title: string;
+  description: string;
+  keys: string[];
+  onEdit: () => void;
+}) => (
+  <div className="flex items-center justify-between rounded-xl border border-zinc-100 bg-zinc-50/50 p-4">
+    <div>
+      <h4 className="text-sm font-medium text-zinc-900">{title}</h4>
+      <p className="mt-0.5 text-xs text-zinc-500">{description}</p>
+    </div>
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 shadow-sm">
+        {keys.map((k, i) => (
+          <ShortcutKey key={i}>{k}</ShortcutKey>
+        ))}
+        <button
+          onClick={onEdit}
+          className="ml-1.5 text-zinc-400 hover:text-zinc-600"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
+const ShortcutsModal = ({ onClose }: { onClose: () => void }) => (
+  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 p-4 backdrop-blur-sm" onClick={onClose}>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.1 }}
+      className="w-full max-w-[520px] overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-black/5"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
+        <h3 className="text-lg font-semibold text-zinc-900">
+          Keyboard shortcuts
+        </h3>
+        <button
+          onClick={onClose}
+          className="rounded-full p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      
+      <div className="p-6 space-y-4">
+        <ShortcutRow
+          title="Push to talk"
+          description="Hold to say something short"
+          keys={["fn"]}
+          onEdit={() => {}}
+        />
+        <ShortcutRow
+          title="Hands-free mode"
+          description="Press to start and stop dictation"
+          keys={["fn", "Space"]}
+          onEdit={() => {}}
+        />
+        <ShortcutRow
+          title="Command Mode"
+          description="Select text and ask Flow or Perplexity"
+          keys={["fn", "^", "Ctrl"]}
+          onEdit={() => {}}
+        />
+        
+        <div className="pt-4 flex justify-center">
+            <button className="text-sm font-medium text-zinc-500 hover:text-zinc-900">
+                Reset to default
+            </button>
+        </div>
+      </div>
+    </motion.div>
+  </div>
+);
+
 // --- Types ---
 
 interface ModelInfo {
@@ -373,6 +467,7 @@ function Dashboard() {
   const [activeModel, setActiveModel] = useState<string>();
   const [section, setSection] = useState<SettingsSection>("general");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   
   // Real Data State
   const [analytics, setAnalytics] = useState<AnalyticsStats | null>(null);
@@ -776,8 +871,9 @@ function Dashboard() {
                       <div className="divide-y divide-zinc-100">
                         <LightSettingsRow
                           title="Keyboard shortcuts"
-                          description="Hold fn and speak. Learn more ➜"
+                          description="Manage global hotkeys"
                           actionLabel="Change"
+                          onAction={() => setShortcutsOpen(true)}
                         />
                         <LightSettingsRow
                           title="Microphone"
@@ -910,6 +1006,12 @@ function Dashboard() {
               </motion.div>
             </div>
           )}
+          
+          <AnimatePresence>
+            {shortcutsOpen && (
+                <ShortcutsModal onClose={() => setShortcutsOpen(false)} />
+            )}
+          </AnimatePresence>
         </main>
       </div>
     </div>
