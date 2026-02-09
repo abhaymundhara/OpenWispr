@@ -225,6 +225,7 @@ fn main() {
             store::get_settings,
             store::set_shortcuts,
             store::set_llm_settings,
+            store::set_formatting_settings,
             llm_client::get_ollama_models,
             llm_manager::list_llm_models,
             llm_manager::download_llm_model,

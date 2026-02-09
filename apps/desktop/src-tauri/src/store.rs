@@ -38,6 +38,9 @@ pub struct Settings {
     pub ollama_base_url: Option<String>,
     pub ollama_model: Option<String>,
     pub system_llm_model: Option<String>, // For local SmolLM2 models
+    // Text Formatting Settings
+    pub text_formatting_enabled: bool,
+    pub text_formatting_mode: String, // "quick", "standard", "smart"
     pub shortcuts: ShortcutSettings,
 }
 
@@ -69,6 +72,8 @@ impl Default for Settings {
             ollama_base_url: Some("http://localhost:11434".to_string()),
             ollama_model: None,
             system_llm_model: Some("SmolLM2-135M-Instruct-Q4_K_M".to_string()), // Default to smallest model
+            text_formatting_enabled: true, // Format by default
+            text_formatting_mode: "standard".to_string(), // Balanced mode
             shortcuts: ShortcutSettings::default(),
         }
     }
@@ -322,6 +327,19 @@ pub fn set_system_llm_model(app: &AppHandle, model: String) {
     let mut store = get_store();
     store.settings.system_llm_model = Some(model);
     save_store(app, &store);
+}
+
+#[tauri::command]
+pub fn set_formatting_settings(
+    app: AppHandle,
+    enabled: bool,
+    mode: String,
+) -> Result<(), String> {
+    let mut store = get_store();
+    store.settings.text_formatting_enabled = enabled;
+    store.settings.text_formatting_mode = mode;
+    save_store(&app, &store);
+    Ok(())
 }
 
 #[tauri::command]
