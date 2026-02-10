@@ -77,7 +77,7 @@ pub async fn list_models() -> Result<Vec<ModelInfo>, String> {
         runtime: "sherpa-onnx".to_string(),
         downloaded: sherpa_downloaded,
         can_download: true,
-        note: Some("NVIDIA Parakeet TDT v3 (Multilingual) int8".to_string()),
+        note: Some("NVIDIA Parakeet TDT v3 (ONNX int8)".to_string()),
     });
 
     #[cfg(target_os = "macos")]
@@ -88,7 +88,7 @@ pub async fn list_models() -> Result<Vec<ModelInfo>, String> {
             runtime: "mlx-parakeet".to_string(),
             downloaded: mlx_downloaded,
             can_download: true,
-            note: Some("Parakeet MLX community model (Multilingual)".to_string()),
+            note: Some("Parakeet MLX community model (8-bit)".to_string()),
         });
     }
 

@@ -415,8 +415,8 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
-  "sherpa-onnx/parakeet-tdt-0.6b-v3-int8": "~600 MB",
-  "mlx-community/parakeet-tdt-0.6b-v3": "~2.3 GB",
+  "sherpa-onnx/parakeet-tdt-0.6b-v3-int8": "~900 MB",
+  "animaslabs/parakeet-tdt-0.6b-v3-mlx-8bit": "~600 MB",
   "distil-whisper-small.en": "~400 MB",
   "distil-whisper-medium.en": "~800 MB",
   "distil-whisper-large-v3": "~1.5 GB",
@@ -1992,7 +1992,7 @@ function Dashboard() {
                             "small",
                             "small.en",
                             "sherpa-onnx/parakeet-tdt-0.6b-v3-int8",
-                            "mlx-community/parakeet-tdt-0.6b-v3",
+                            "animaslabs/parakeet-tdt-0.6b-v3-mlx-8bit",
                           ].includes(m.name),
                         )}
                         activeModel={activeModel}
@@ -2013,7 +2013,9 @@ function Dashboard() {
                         onSelectModel={(model) => {
                           const m = models.find((x) => x.name === model);
                           if (m && !m.downloaded) {
-                            void onDownload(model);
+                            if (confirm(`Do you want to download ${model}? (Size: ${MODEL_SIZE_HINTS[model] || "Unknown"})`)) {
+                                void onDownload(model);
+                            }
                           } else {
                             void onSelectModel(model);
                           }

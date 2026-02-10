@@ -9,7 +9,7 @@ use thiserror::Error;
 pub mod adapters;
 
 pub const SHERPA_PARAKEET_INT8_MODEL: &str = "sherpa-onnx/parakeet-tdt-0.6b-v3-int8";
-pub const MLX_PARAKEET_V2_MODEL: &str = "mlx-community/parakeet-tdt-0.6b-v3";
+pub const MLX_PARAKEET_V2_MODEL: &str = "animaslabs/parakeet-tdt-0.6b-v3-mlx-8bit";
 
 pub fn is_sherpa_model_name(model_name: &str) -> bool {
     model_name == SHERPA_PARAKEET_INT8_MODEL
