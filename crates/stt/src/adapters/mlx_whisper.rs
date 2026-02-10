@@ -1,6 +1,6 @@
 use crate::{
-    emit_model_download_progress, is_mlx_model_name, AudioFormat, ModelDownloadProgress, Result,
-    SttConfig, SttError, TranscriptSegment, Transcription,
+    emit_model_download_progress, is_mlx_whisper_model_name, AudioFormat, ModelDownloadProgress,
+    Result, SttConfig, SttError, TranscriptSegment, Transcription,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -139,7 +139,7 @@ impl SharedMlxWhisperAdapter {
     }
 
     pub(crate) async fn is_model_available(&self, model_name: &str) -> bool {
-        if !is_mlx_model_name(model_name) {
+        if !is_mlx_whisper_model_name(model_name) {
             return false;
         }
         marker_file_path(model_name)
