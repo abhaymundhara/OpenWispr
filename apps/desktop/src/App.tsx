@@ -1992,6 +1992,7 @@ function Dashboard() {
                             "small",
                             "small.en",
                             "sherpa-onnx/parakeet-tdt-0.6b-v3-int8",
+                            "mlx-community/parakeet-tdt-0.6b-v3",
                           ].includes(m.name),
                         )}
                         activeModel={activeModel}
