@@ -360,6 +360,7 @@ interface AudioDevice {
 interface Snippet {
   trigger: string;
   expansion: string;
+  language?: string | null;
 }
 
 interface Settings {
@@ -422,6 +423,22 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "sherpa-onnx-whisper-tiny.en": "~75 MB",
   "sherpa-onnx-whisper-base.en": "~145 MB",
   "sherpa-onnx-whisper-small.en": "~480 MB",
+};
+
+const SNIPPET_LANGUAGE_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: "All languages", value: "all" },
+  { label: "English", value: "en" },
+  { label: "Hindi", value: "hi" },
+  { label: "English (US)", value: "en-us" },
+  { label: "English (UK)", value: "en-gb" },
+];
+
+const snippetLanguageLabel = (language?: string | null) => {
+  if (!language) return "All languages";
+  const normalized = language.toLowerCase();
+  const matched = SNIPPET_LANGUAGE_OPTIONS.find((opt) => opt.value === normalized);
+  if (matched) return matched.label;
+  return normalized.toUpperCase();
 };
 
 // --- Components ---
@@ -857,6 +874,9 @@ function Dashboard() {
   const [newWord, setNewWord] = useState("");
   const [newTrigger, setNewTrigger] = useState("");
   const [newExpansion, setNewExpansion] = useState("");
+  const [newSnippetLanguage, setNewSnippetLanguage] = useState("all");
+  const downloadNoticeRef = useRef<Record<string, string>>({});
+  const llmDownloadNoticeRef = useRef<Record<string, string>>({});
 
   // LLM State
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
@@ -1038,6 +1058,17 @@ function Dashboard() {
               ...prev,
               [progress.model]: progress,
             }));
+            if (progress.done) {
+              const signature = `${progress.stage}:${progress.error ?? ""}`;
+              if (downloadNoticeRef.current[progress.model] !== signature) {
+                downloadNoticeRef.current[progress.model] = signature;
+                if (progress.error) {
+                  toast.error(progress.error);
+                } else {
+                  toast.success(`${progress.model} is ready`);
+                }
+              }
+            }
           },
         );
 
@@ -1050,6 +1081,17 @@ function Dashboard() {
               ...prev,
               [progress.model]: progress,
             }));
+            if (progress.done) {
+              const signature = `${progress.stage}:${progress.error ?? ""}`;
+              if (llmDownloadNoticeRef.current[progress.model] !== signature) {
+                llmDownloadNoticeRef.current[progress.model] = signature;
+                if (progress.error) {
+                  toast.error(progress.error);
+                } else {
+                  toast.success(`${progress.model} downloaded`);
+                }
+              }
+            }
             // Reload models when download completes
             if (progress.done && !progress.error) {
               void fetchSystemLlmModels();
@@ -1740,47 +1782,54 @@ function Dashboard() {
                                 placeholder="Trigger (e.g. 'my-addr')"
                                 className="px-3 py-2 text-[0.9rem] bg-zinc-50 border border-zinc-200 rounded-md focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
                               />
-                              <div className="flex gap-2">
-                                <input
-                                  type="text"
-                                  value={newExpansion}
-                                  onChange={(e) =>
-                                    setNewExpansion(e.target.value)
+                              <input
+                                type="text"
+                                value={newExpansion}
+                                onChange={(e) => setNewExpansion(e.target.value)}
+                                placeholder="Expansion text..."
+                                className="flex-1 px-3 py-2 text-[0.9rem] bg-zinc-50 border border-zinc-200 rounded-md focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
+                              />
+                              <select
+                                value={newSnippetLanguage}
+                                onChange={(e) => setNewSnippetLanguage(e.target.value)}
+                                className="px-3 py-2 text-[0.9rem] bg-zinc-50 border border-zinc-200 rounded-md focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
+                              >
+                                {SNIPPET_LANGUAGE_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={async () => {
+                                  if (newTrigger.trim() && newExpansion.trim()) {
+                                    const current = settings?.snippets || [];
+                                    const next = [
+                                      ...current,
+                                      {
+                                        trigger: newTrigger.trim(),
+                                        expansion: newExpansion.trim(),
+                                        language:
+                                          newSnippetLanguage === "all"
+                                            ? null
+                                            : newSnippetLanguage,
+                                      },
+                                    ];
+                                    await invoke("set_snippets", {
+                                      snippets: next,
+                                    });
+                                    setSettings((prev) =>
+                                      prev ? { ...prev, snippets: next } : null,
+                                    );
+                                    setNewTrigger("");
+                                    setNewExpansion("");
+                                    setNewSnippetLanguage("all");
                                   }
-                                  placeholder="Expansion text..."
-                                  className="flex-1 px-3 py-2 text-[0.9rem] bg-zinc-50 border border-zinc-200 rounded-md focus:outline-none focus:ring-2 focus:ring-zinc-900 transition-all"
-                                />
-                                <button
-                                  onClick={async () => {
-                                    if (
-                                      newTrigger.trim() &&
-                                      newExpansion.trim()
-                                    ) {
-                                      const current = settings?.snippets || [];
-                                      const next = [
-                                        ...current,
-                                        {
-                                          trigger: newTrigger.trim(),
-                                          expansion: newExpansion.trim(),
-                                        },
-                                      ];
-                                      await invoke("set_snippets", {
-                                        snippets: next,
-                                      });
-                                      setSettings((prev) =>
-                                        prev
-                                          ? { ...prev, snippets: next }
-                                          : null,
-                                      );
-                                      setNewTrigger("");
-                                      setNewExpansion("");
-                                    }
-                                  }}
-                                  className="px-4 py-2 bg-zinc-900 text-white text-[0.9rem] font-medium rounded-md hover:bg-zinc-800 transition-colors shadow-sm active:scale-95"
-                                >
-                                  Add
-                                </button>
-                              </div>
+                                }}
+                                className="px-4 py-2 bg-zinc-900 text-white text-[0.9rem] font-medium rounded-md hover:bg-zinc-800 transition-colors shadow-sm active:scale-95"
+                              >
+                                Add
+                              </button>
                             </div>
 
                             {settings?.snippets &&
@@ -1792,9 +1841,14 @@ function Dashboard() {
                                       className="group flex items-center justify-between p-3 bg-zinc-50 border border-zinc-200 rounded-lg hover:border-zinc-300 transition-all"
                                     >
                                       <div className="flex flex-col">
-                                        <span className="text-[0.85rem] font-bold text-zinc-900 leading-none mb-1">
-                                          {snippet.trigger}
-                                        </span>
+                                        <div className="mb-1 flex items-center gap-2">
+                                          <span className="text-[0.85rem] font-bold text-zinc-900 leading-none">
+                                            {snippet.trigger}
+                                          </span>
+                                          <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide text-zinc-500">
+                                            {snippetLanguageLabel(snippet.language)}
+                                          </span>
+                                        </div>
                                         <span className="text-[0.8rem] text-zinc-500 truncate max-w-[200px] sm:max-w-xs">
                                           {snippet.expansion}
                                         </span>

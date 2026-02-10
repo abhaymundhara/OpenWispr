@@ -7,6 +7,23 @@ use thiserror::Error;
 
 mod prompts;
 
+fn should_skip_llm_processing(trimmed: &str, min_words_for_processing: usize) -> bool {
+    trimmed.split_whitespace().count() < min_words_for_processing
+}
+
+fn build_prompt(
+    mode: &str,
+    text: &str,
+    dictionary: &[String],
+    clipboard_context: Option<&str>,
+) -> String {
+    match mode {
+        "rewrite" => prompts::rewrite_prompt(text, clipboard_context),
+        "grammar" => prompts::grammar_prompt(text),
+        _ => prompts::core_format_prompt(text, dictionary),
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ProcessorError {
     #[error("LLM error: {0}")]
@@ -63,6 +80,16 @@ impl TextProcessor {
     }
 
     pub async fn process(&self, raw_text: &str, dictionary: &[String], mode: &str) -> Result<ProcessingResult> {
+        self.process_with_context(raw_text, dictionary, mode, None).await
+    }
+
+    pub async fn process_with_context(
+        &self,
+        raw_text: &str,
+        dictionary: &[String],
+        mode: &str,
+        clipboard_context: Option<&str>,
+    ) -> Result<ProcessingResult> {
         let start = Instant::now();
 
         let trimmed = raw_text.trim();
@@ -71,7 +98,7 @@ impl TextProcessor {
         }
 
         // Skip processing for very short text to avoid LLM "over-fixing" or hallucinations
-        if trimmed.split_whitespace().count() < self.min_words_for_processing {
+        if should_skip_llm_processing(trimmed, self.min_words_for_processing) {
             return Ok(ProcessingResult {
                 formatted_text: trimmed.to_string(),
                 original_text: raw_text.to_string(),
@@ -79,12 +106,7 @@ impl TextProcessor {
             });
         }
 
-        // Generate prompt based on mode
-        let prompt = match mode {
-            "rewrite" => prompts::rewrite_prompt(trimmed),
-            "grammar" => prompts::grammar_prompt(trimmed),
-            _ => prompts::core_format_prompt(trimmed, dictionary),
-        };
+        let prompt = build_prompt(mode, trimmed, dictionary, clipboard_context);
 
         // Run LLM inference
         let formatted = self

@@ -38,6 +38,12 @@ struct AudioStream {
 unsafe impl Send for AudioStream {}
 unsafe impl Sync for AudioStream {}
 
+const PARTIAL_TRANSCRIPTION_START_DELAY_MS: u64 = 1200;
+const PARTIAL_TRANSCRIPTION_INTERVAL_MS: u64 = 1200;
+const PARTIAL_MIN_AUDIO_SECONDS: usize = 2;
+const PARTIAL_MIN_DELTA_SECONDS: usize = 1;
+const PARTIAL_WINDOW_SECONDS: usize = 8;
+
 pub struct AudioCapture {
     stream: Arc<Mutex<AudioStream>>,
     samples: Arc<Mutex<Vec<f32>>>,
@@ -49,6 +55,9 @@ pub struct AudioCapture {
     loaded_llm_model: Arc<AsyncMutex<Option<String>>>,
     was_system_muted: Arc<Mutex<Option<bool>>>,
     is_command_mode: Arc<Mutex<bool>>,
+    partial_last_sample_count: Arc<Mutex<usize>>,
+    partial_last_text: Arc<Mutex<String>>,
+    max_buffered_samples: Arc<Mutex<usize>>,
 }
 
 impl AudioCapture {
@@ -64,6 +73,9 @@ impl AudioCapture {
             loaded_llm_model: Arc::new(AsyncMutex::new(None)),
             was_system_muted: Arc::new(Mutex::new(None)),
             is_command_mode: Arc::new(Mutex::new(false)),
+            partial_last_sample_count: Arc::new(Mutex::new(0)),
+            partial_last_text: Arc::new(Mutex::new(String::new())),
+            max_buffered_samples: Arc::new(Mutex::new(0)),
         }
     }
 }
@@ -81,6 +93,9 @@ impl Clone for AudioCapture {
             loaded_llm_model: self.loaded_llm_model.clone(),
             was_system_muted: self.was_system_muted.clone(),
             is_command_mode: self.is_command_mode.clone(),
+            partial_last_sample_count: self.partial_last_sample_count.clone(),
+            partial_last_text: self.partial_last_text.clone(),
+            max_buffered_samples: self.max_buffered_samples.clone(),
         }
     }
 }
@@ -519,6 +534,52 @@ fn calculate_rms(samples: &[f32]) -> f32 {
     (sum / samples.len() as f32).sqrt()
 }
 
+fn read_clipboard_text_context(max_chars: usize) -> Option<String> {
+    if max_chars == 0 {
+        return None;
+    }
+
+    let mut clipboard = Clipboard::new().ok()?;
+    let text = clipboard.get_text().ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut clipped: String = trimmed.chars().take(max_chars).collect();
+    if trimmed.chars().count() > max_chars {
+        clipped.push('…');
+    }
+    Some(clipped)
+}
+
+fn normalize_language_tag(raw: &str) -> String {
+    raw.trim().replace('_', "-").to_ascii_lowercase()
+}
+
+fn snippet_applies_to_language(
+    snippet_language: Option<&str>,
+    active_language: Option<&str>,
+) -> bool {
+    let Some(snippet_lang) = snippet_language
+        .map(normalize_language_tag)
+        .filter(|lang| !lang.is_empty())
+    else {
+        return true;
+    };
+
+    let Some(active_lang) = active_language
+        .map(normalize_language_tag)
+        .filter(|lang| !lang.is_empty())
+    else {
+        return false;
+    };
+
+    snippet_lang == active_lang
+        || active_lang.starts_with(&format!("{snippet_lang}-"))
+        || snippet_lang.starts_with(&format!("{active_lang}-"))
+}
+
 fn is_system_muted_macos() -> bool {
     let output = Command::new("osascript")
         .arg("-e")
@@ -639,7 +700,11 @@ fn unmute_system(capture: &AudioCapture) {
     }
 }
 
-fn apply_snippets(text: &str, snippets: &[crate::store::Snippet]) -> String {
+fn apply_snippets(
+    text: &str,
+    snippets: &[crate::store::Snippet],
+    active_language: Option<&str>,
+) -> String {
     let mut result = text.to_string();
     
     // Sort snippets by trigger length descending to avoid partial matches on longer triggers
@@ -647,6 +712,9 @@ fn apply_snippets(text: &str, snippets: &[crate::store::Snippet]) -> String {
     sorted_snippets.sort_by(|a, b| b.trigger.len().cmp(&a.trigger.len()));
 
     for snippet in sorted_snippets {
+        if !snippet_applies_to_language(snippet.language.as_deref(), active_language) {
+            continue;
+        }
         if snippet.trigger.is_empty() { continue; }
         
         // Handle variables in expansion
@@ -742,6 +810,19 @@ fn select_input_device(host: &Host, app: &AppHandle) -> Result<Device, String> {
     }
 
     Err("No input device available".to_string())
+}
+
+fn to_user_facing_audio_error(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("device")
+        && (lower.contains("disconnect") || lower.contains("not available") || lower.contains("invalidated"))
+    {
+        return "Microphone disconnected. Reconnect your input device and try again.".to_string();
+    }
+    if lower.contains("permission") || lower.contains("denied") {
+        return "Microphone permission denied. Allow microphone access in system settings.".to_string();
+    }
+    format!("Audio input error: {}", raw)
 }
 
 fn ffmpeg_binary_candidates() -> &'static [&'static str] {
@@ -943,6 +1024,18 @@ pub async fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle,
             bits_per_sample: 16,
         };
     }
+    {
+        let mut partial_last = capture.partial_last_sample_count.lock().unwrap();
+        *partial_last = 0;
+    }
+    {
+        let mut partial_text = capture.partial_last_text.lock().unwrap();
+        partial_text.clear();
+    }
+    {
+        let mut max_samples = capture.max_buffered_samples.lock().unwrap();
+        *max_samples = 0;
+    }
 
     emit_transcription_status(&app, "listening", None);
 
@@ -955,13 +1048,34 @@ pub async fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle,
     // Build the input stream
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => {
-            build_input_stream::<f32>(&device, &config.into(), app.clone(), capture.samples.clone())?
+            build_input_stream::<f32>(
+                &device,
+                &config.into(),
+                app.clone(),
+                capture.samples.clone(),
+                capture.max_buffered_samples.clone(),
+                capture.is_recording.clone(),
+            )?
         }
         cpal::SampleFormat::I16 => {
-            build_input_stream::<i16>(&device, &config.into(), app.clone(), capture.samples.clone())?
+            build_input_stream::<i16>(
+                &device,
+                &config.into(),
+                app.clone(),
+                capture.samples.clone(),
+                capture.max_buffered_samples.clone(),
+                capture.is_recording.clone(),
+            )?
         }
         cpal::SampleFormat::U16 => {
-            build_input_stream::<u16>(&device, &config.into(), app.clone(), capture.samples.clone())?
+            build_input_stream::<u16>(
+                &device,
+                &config.into(),
+                app.clone(),
+                capture.samples.clone(),
+                capture.max_buffered_samples.clone(),
+                capture.is_recording.clone(),
+            )?
         }
         _ => return Err("Unsupported sample format".to_string()),
     };
@@ -983,7 +1097,7 @@ pub async fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle,
     // Use tauri::async_runtime::spawn for consistency
     tauri::async_runtime::spawn(async move {
         // Wait a bit before starting partials
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        tokio::time::sleep(Duration::from_millis(PARTIAL_TRANSCRIPTION_START_DELAY_MS)).await;
         
         while {
             let recording = capture_clone.is_recording.lock().unwrap();
@@ -997,7 +1111,7 @@ pub async fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle,
             }
             
             // Wait for next partial
-            tokio::time::sleep(Duration::from_millis(1500)).await;
+            tokio::time::sleep(Duration::from_millis(PARTIAL_TRANSCRIPTION_INTERVAL_MS)).await;
         }
     });
 
@@ -1005,18 +1119,33 @@ pub async fn start_recording_for_capture(capture: &AudioCapture, app: AppHandle,
 }
 
 async fn run_partial_transcription(capture: AudioCapture, app: AppHandle) -> Result<(), String> {
-    let samples = {
-        let guard = capture.samples.lock().unwrap();
-        // At least 2.0s of audio for a meaningful partial
-        if guard.len() < (16000.0 * 2.0) as usize {
-            return Ok(());
-        }
-        guard.clone()
-    };
-
     let format = {
         let guard = capture.format.lock().unwrap();
         guard.clone()
+    };
+    let sample_rate = format.sample_rate.max(1) as usize;
+    let channels = format.channels.max(1) as usize;
+    let min_samples = (sample_rate * channels * PARTIAL_MIN_AUDIO_SECONDS).max(1);
+    let min_delta_samples = (sample_rate * channels * PARTIAL_MIN_DELTA_SECONDS).max(1);
+    let window_samples = (sample_rate * channels * PARTIAL_WINDOW_SECONDS).max(min_samples);
+
+    let samples = {
+        let guard = capture.samples.lock().unwrap();
+        if guard.len() < min_samples {
+            return Ok(());
+        }
+
+        let current_len = guard.len();
+        {
+            let mut last_count = capture.partial_last_sample_count.lock().unwrap();
+            if current_len.saturating_sub(*last_count) < min_delta_samples {
+                return Ok(());
+            }
+            *last_count = current_len;
+        }
+
+        let start = current_len.saturating_sub(window_samples);
+        guard[start..].to_vec()
     };
 
     let target_model = crate::models::active_model_value();
@@ -1034,11 +1163,18 @@ async fn run_partial_transcription(capture: AudioCapture, app: AppHandle) -> Res
     // Run transcription
     let result = adapter.transcribe(&samples, format).await.map_err(|e| e.to_string())?;
     
-    if !result.text.trim().is_empty() {
+    let partial_text = result.text.trim().to_string();
+    if !partial_text.is_empty() {
+        let mut last_text = capture.partial_last_text.lock().unwrap();
+        if *last_text == partial_text {
+            return Ok(());
+        }
+        *last_text = partial_text.clone();
+
         let _ = app.emit_all(
             "transcription-result",
             TranscriptionResultEvent {
-                text: result.text.clone(),
+                text: partial_text,
                 language: result.language.clone(),
                 confidence: result.confidence,
                 is_final: false,
@@ -1059,12 +1195,22 @@ fn build_input_stream<T>(
     config: &StreamConfig,
     app: AppHandle,
     stt_samples: Arc<Mutex<Vec<f32>>>,
+    max_buffered_samples: Arc<Mutex<usize>>,
+    is_recording: Arc<Mutex<bool>>,
 ) -> Result<Stream, String>
 where
     T: cpal::Sample + cpal::SizedSample,
     f32: cpal::FromSample<T>,
 {
-    let err_fn = |err| eprintln!("Error in audio stream: {}", err);
+    let app_for_error = app.clone();
+    let err_fn = move |err: cpal::StreamError| {
+        eprintln!("Error in audio stream: {}", err);
+        if let Ok(mut recording) = is_recording.lock() {
+            *recording = false;
+        }
+        let message = to_user_facing_audio_error(&err.to_string());
+        emit_transcription_status(&app_for_error, "error", Some(message));
+    };
 
     let mut buffer = Vec::new();
     let chunk_size = (config.sample_rate.0 as f32 * 0.1) as usize; // 100ms chunks
@@ -1078,6 +1224,9 @@ where
                     data.iter().map(|&s| cpal::Sample::from_sample(s)).collect();
                 if let Ok(mut stt_data) = stt_samples.lock() {
                     stt_data.extend_from_slice(&samples);
+                    if let Ok(mut peak) = max_buffered_samples.lock() {
+                        *peak = (*peak).max(stt_data.len());
+                    }
                 }
 
                 buffer.extend_from_slice(&samples);
@@ -1140,6 +1289,20 @@ pub async fn stop_recording_for_capture(
         let mut samples = capture.samples.lock().unwrap();
         std::mem::take(&mut *samples)
     };
+    let peak_samples = {
+        let mut peak = capture.max_buffered_samples.lock().unwrap();
+        let value = *peak;
+        *peak = 0;
+        value
+    };
+
+    if verbose_logs_enabled() {
+        let peak_mb = (peak_samples as f64 * std::mem::size_of::<f32>() as f64) / (1024.0 * 1024.0);
+        println!(
+            "[perf] session peak audio buffer: {:.2} MB ({} samples)",
+            peak_mb, peak_samples
+        );
+    }
 
     if audio_data.is_empty() {
         return Ok(());
@@ -1266,6 +1429,17 @@ pub async fn stop_recording_for_capture(
             // Get formatting settings
             let settings = crate::store::get_settings();
             let mut final_text = result.text.clone();
+            let is_command_mode = *capture.is_command_mode.lock().unwrap();
+            let formatting_mode = if is_command_mode {
+                settings.text_formatting_mode.clone()
+            } else {
+                "smart".to_string()
+            };
+            let rewrite_context = if is_command_mode && formatting_mode == "rewrite" {
+                read_clipboard_text_context(1200)
+            } else {
+                None
+            };
 
             // Apply text formatting if enabled
             if settings.text_formatting_enabled {
@@ -1284,6 +1458,8 @@ pub async fn stop_recording_for_capture(
                 let personal_dictionary = settings.personal_dictionary.clone();
                 let processor_cache = capture.text_processor.clone();
                 let loaded_llm_cache = capture.loaded_llm_model.clone();
+                let mode = formatting_mode.clone();
+                let rewrite_context = rewrite_context.clone();
 
                 match tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
@@ -1302,22 +1478,19 @@ pub async fn stop_recording_for_capture(
                         }
 
                         let processor = proc_guard.as_ref().unwrap();
-                        let mode = if *capture.is_command_mode.lock().unwrap() {
-                            settings.text_formatting_mode.clone()
-                        } else {
-                            "smart".to_string()
-                        };
-                        processor.process(&transcribed_text, &personal_dictionary, &mode).await
+                        processor
+                            .process_with_context(
+                                &transcribed_text,
+                                &personal_dictionary,
+                                &mode,
+                                rewrite_context.as_deref(),
+                            )
+                            .await
                     })
                 }) {
                     Ok(processing_result) => {
                         final_text = processing_result.formatted_text;
                         
-                        // Apply snippets after formatting
-                        if !settings.snippets.is_empty() {
-                            final_text = apply_snippets(&final_text, &settings.snippets);
-                        }
-
                         println!("[formatting] final: {}", final_text.trim());
                     }
                     Err(e) => {
@@ -1325,6 +1498,11 @@ pub async fn stop_recording_for_capture(
                         // Fallback to original text - already set in final_text
                     }
                 }
+            }
+
+            if !settings.snippets.is_empty() {
+                let snippet_language = result.language.as_deref().or(settings.language.as_deref());
+                final_text = apply_snippets(&final_text, &settings.snippets, snippet_language);
             }
 
             // Paste synchronously BEFORE emitting events to ensure it completes

@@ -28,9 +28,21 @@ impl Default for Analytics {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct Snippet {
     pub trigger: String,
     pub expansion: String,
+    pub language: Option<String>,
+}
+
+impl Default for Snippet {
+    fn default() -> Self {
+        Self {
+            trigger: String::new(),
+            expansion: String::new(),
+            language: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -181,6 +193,40 @@ pub fn hands_free_toggle_shortcut() -> String {
 
 pub fn command_mode_shortcut() -> String {
     get_store().settings.shortcuts.command_mode
+}
+
+fn normalize_language_tag(raw: &str) -> String {
+    raw.trim().replace('_', "-").to_ascii_lowercase()
+}
+
+fn normalize_optional_language(language: Option<String>) -> Option<String> {
+    let normalized = language
+        .as_deref()
+        .map(normalize_language_tag)
+        .unwrap_or_default();
+    if normalized.is_empty() || normalized == "all" || normalized == "*" {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn sanitize_snippets(snippets: Vec<Snippet>) -> Vec<Snippet> {
+    snippets
+        .into_iter()
+        .filter_map(|snippet| {
+            let trigger = snippet.trigger.trim().to_string();
+            let expansion = snippet.expansion.trim().to_string();
+            if trigger.is_empty() || expansion.is_empty() {
+                return None;
+            }
+            Some(Snippet {
+                trigger,
+                expansion,
+                language: normalize_optional_language(snippet.language),
+            })
+        })
+        .collect()
 }
 
 fn store_path(app: &AppHandle) -> Option<PathBuf> {
@@ -379,7 +425,7 @@ pub fn get_personal_dictionary() -> Vec<String> {
 #[tauri::command]
 pub fn set_snippets(app: AppHandle, snippets: Vec<Snippet>) -> Result<(), String> {
     let mut store = get_store();
-    store.settings.snippets = snippets;
+    store.settings.snippets = sanitize_snippets(snippets);
     save_store(&app, &store);
     Ok(())
 }
@@ -465,5 +511,44 @@ mod tests {
     #[test]
     fn parse_shortcut_rejects_multiple_non_modifier_keys() {
         assert!(parse_shortcut("ctrl+k+m").is_err());
+    }
+
+    #[test]
+    fn normalize_optional_language_handles_all_values() {
+        assert_eq!(normalize_optional_language(None), None);
+        assert_eq!(
+            normalize_optional_language(Some(" EN_us ".to_string())),
+            Some("en-us".to_string())
+        );
+        assert_eq!(normalize_optional_language(Some("all".to_string())), None);
+        assert_eq!(normalize_optional_language(Some("*".to_string())), None);
+    }
+
+    #[test]
+    fn sanitize_snippets_drops_empty_and_normalizes_language() {
+        let snippets = vec![
+            Snippet {
+                trigger: "  sig  ".to_string(),
+                expansion: "  Kind regards  ".to_string(),
+                language: Some("EN_us".to_string()),
+            },
+            Snippet {
+                trigger: " ".to_string(),
+                expansion: "ignored".to_string(),
+                language: Some("en".to_string()),
+            },
+            Snippet {
+                trigger: "todo".to_string(),
+                expansion: "todo:".to_string(),
+                language: Some("*".to_string()),
+            },
+        ];
+
+        let sanitized = sanitize_snippets(snippets);
+        assert_eq!(sanitized.len(), 2);
+        assert_eq!(sanitized[0].trigger, "sig");
+        assert_eq!(sanitized[0].expansion, "Kind regards");
+        assert_eq!(sanitized[0].language.as_deref(), Some("en-us"));
+        assert_eq!(sanitized[1].language, None);
     }
 }

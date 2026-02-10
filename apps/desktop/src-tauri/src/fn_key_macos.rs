@@ -4,8 +4,8 @@ use crate::audio::{self, AudioCapture};
 use crate::store::ShortcutSpec;
 use objc2_core_foundation::{kCFRunLoopDefaultMode, CFMachPort, CFRunLoop};
 use objc2_core_graphics::{
-    CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
-    CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy, CGEventType,
+    CGEvent, CGEventField, CGEventFlags, CGEventTapLocation, CGEventTapOptions,
+    CGEventTapPlacement, CGEventTapProxy, CGEventType,
 };
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
@@ -214,12 +214,10 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
         let keycode =
             CGEvent::integer_value_field(Some(event_ref), CGEventField::KeyboardEventKeycode);
         // Only trust Fn state when the actual Fn key emits a FlagsChanged event.
-        // Also cross-check global HID flags to ignore transient false release pulses.
+        // Avoid global HID flag fallback because it can lag and keep Fn "stuck",
+        // which causes duplicate start/stop transitions and UI flicker.
         if keycode == i64::from(FN_KEYCODE) {
-            let event_fn_down = flags.contains(CGEventFlags::MaskSecondaryFn);
-            let global_fn_down = CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState)
-                .contains(CGEventFlags::MaskSecondaryFn);
-            state.fn_down = event_fn_down || global_fn_down;
+            state.fn_down = flags.contains(CGEventFlags::MaskSecondaryFn);
         }
     }
 

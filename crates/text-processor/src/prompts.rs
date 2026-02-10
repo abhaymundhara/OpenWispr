@@ -21,10 +21,24 @@ Input: "{text}"
 Output (Transcribed text only):"#
     )
 }
-pub fn rewrite_prompt(text: &str) -> String {
+pub fn rewrite_prompt(text: &str, clipboard_context: Option<&str>) -> String {
+    let context_section = clipboard_context
+        .map(str::trim)
+        .filter(|ctx| !ctx.is_empty())
+        .map(|ctx| {
+            format!(
+                r#"
+Additional context from the user's current clipboard selection:
+"{ctx}"
+
+Use this context only to improve clarity and consistency. Do not invent details not present in input or context."#
+            )
+        })
+        .unwrap_or_default();
+
     format!(
         r#"Rewrite the following text to be professional, clear, and concise. 
-Maintain the original meaning but improve the flow and vocabulary.
+Maintain the original meaning but improve the flow and vocabulary.{context_section}
 
 Input: "{text}"
 

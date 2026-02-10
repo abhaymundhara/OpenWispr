@@ -31,6 +31,26 @@ fn emit_model_download_progress_event(app: &tauri::AppHandle, payload: ModelDown
     let _ = app.emit_all("model-download-progress", payload);
 }
 
+fn to_user_facing_download_error(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return "Download timed out. Please check your connection and retry.".to_string();
+    }
+    if lower.contains("dns") || lower.contains("resolve") || lower.contains("network") {
+        return "Network error while downloading model. Check internet access and retry.".to_string();
+    }
+    if lower.contains("permission denied") || lower.contains("access is denied") {
+        return "OpenWispr cannot write model files. Check folder permissions.".to_string();
+    }
+    if lower.contains("no space") || lower.contains("disk full") {
+        return "Not enough disk space to download this model.".to_string();
+    }
+    if lower.contains("404") || lower.contains("not found") {
+        return "Model artifact not found on the remote host. Try again later.".to_string();
+    }
+    format!("Model download failed: {}", raw)
+}
+
 pub fn active_model_value() -> String {
     crate::store::get_store().settings.active_transcription_model
 }
@@ -141,6 +161,7 @@ pub async fn download_model(app: tauri::AppHandle, model: String) -> Result<(), 
             Ok(())
         }
         Err(error) => {
+            let friendly_error = to_user_facing_download_error(&error);
             let downloaded = create_adapter()
                 .map_err(|e| e.to_string())?
                 .is_model_available(&model)
@@ -173,11 +194,11 @@ pub async fn download_model(app: tauri::AppHandle, model: String) -> Result<(), 
                     total_bytes: None,
                     percent: None,
                     done: true,
-                    error: Some(error.clone()),
+                    error: Some(friendly_error.clone()),
                     message: Some("Download failed".to_string()),
                 },
             );
-            Err(error)
+            Err(friendly_error)
         }
     }
 }

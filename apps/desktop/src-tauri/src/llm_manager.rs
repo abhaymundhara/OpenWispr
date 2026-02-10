@@ -14,6 +14,20 @@ pub struct ModelDownloadProgressEvent {
     pub message: Option<String>,
 }
 
+fn to_user_facing_llm_download_error(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return "LLM model download timed out. Please retry.".to_string();
+    }
+    if lower.contains("network") || lower.contains("dns") || lower.contains("resolve") {
+        return "Network error while downloading LLM model.".to_string();
+    }
+    if lower.contains("no space") || lower.contains("disk full") {
+        return "Not enough disk space for the selected LLM model.".to_string();
+    }
+    format!("LLM download failed: {}", raw)
+}
+
 #[tauri::command]
 pub fn list_llm_models() -> Result<Vec<LlmModelInfo>, String> {
     Ok(models::list_models())
@@ -24,7 +38,7 @@ pub async fn download_llm_model(app: AppHandle, model: String) -> Result<(), Str
     let model_clone = model.clone();
     let app_clone = app.clone();
     
-    models::download_model(&model, Some(Box::new(move |downloaded, total| {
+    let result = models::download_model(&model, Some(Box::new(move |downloaded, total| {
         let percent = if total > 0 {
             (downloaded as f32 / total as f32) * 100.0
         } else {
@@ -45,8 +59,25 @@ pub async fn download_llm_model(app: AppHandle, model: String) -> Result<(), Str
             },
         );
     })))
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
+
+    if let Err(err) = result {
+        let friendly = to_user_facing_llm_download_error(&err.to_string());
+        let _ = app.emit_all(
+            "llm-model-download-progress",
+            ModelDownloadProgressEvent {
+                model: model.clone(),
+                stage: "error".to_string(),
+                downloaded_bytes: 0,
+                total_bytes: None,
+                percent: None,
+                done: true,
+                error: Some(friendly.clone()),
+                message: Some("Download failed".to_string()),
+            },
+        );
+        return Err(friendly);
+    }
 
     // Emit completion event
     let _ = app.emit_all(
