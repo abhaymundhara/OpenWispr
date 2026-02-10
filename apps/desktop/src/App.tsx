@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api";
+import { appWindow } from "@tauri-apps/api/window";
 
 type TranscriptionStatus = "idle" | "listening" | "processing" | "error";
 
@@ -18,23 +19,30 @@ type ModelInfo = {
   note?: string;
 };
 
+type ModelDownloadProgressEvent = {
+  model: string;
+  stage: string;
+  downloaded_bytes: number;
+  total_bytes?: number;
+  percent?: number;
+  done: boolean;
+  error?: string;
+  message?: string;
+};
+
 const MODEL_SIZE_HINTS: Record<string, string> = {
-  "tiny": "~75 MB",
+  tiny: "~75 MB",
   "tiny.en": "~75 MB",
-  "base": "~140 MB",
+  base: "~140 MB",
   "base.en": "~140 MB",
-  "small": "~460 MB",
+  small: "~460 MB",
   "small.en": "~460 MB",
-  "medium": "~1.5 GB",
+  medium: "~1.5 GB",
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
-  "mlx-community/whisper-tiny": "~75 MB",
-  "mlx-community/whisper-base": "~140 MB",
-  "mlx-community/whisper-small": "~460 MB",
-  "mlx-community/whisper-medium": "~1.5 GB",
-  "mlx-community/whisper-large-v3-turbo": "~1.6 GB",
-  "mlx-community/whisper-large-v3": "~3.1 GB",
+  "sherpa-onnx/parakeet-tdt-0.6b-v2-int8": "~1.0 GB",
+  "mlx-community/parakeet-tdt-0.6b-v2": "~1.2 GB",
 };
 
 const windowLabel =
@@ -67,14 +75,22 @@ const useFeedbackSounds = (enabled: boolean) => {
     if (ctx.state === "suspended") void ctx.resume();
     const t = ctx.currentTime;
 
-    const playTone = (freq: number, gainStart: number, startOffset: number, duration: number) => {
+    const playTone = (
+      freq: number,
+      gainStart: number,
+      startOffset: number,
+      duration: number,
+    ) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.frequency.setValueAtTime(freq, t + startOffset);
       gain.gain.setValueAtTime(gainStart, t + startOffset);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + startOffset + duration);
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        t + startOffset + duration,
+      );
       osc.start(t + startOffset);
       osc.stop(t + startOffset + duration);
     };
@@ -137,10 +153,14 @@ const JarvisWaveBars = ({ audioLevel }: { audioLevel: number }) => {
       {[...Array(10)].map((_, index) => {
         const baseHeight = 6;
         const maxHeight = 14;
-        const variation = Math.sin(time + index * 0.4) * 0.6 + (Math.random() - 0.5) * 1.0;
+        const variation =
+          Math.sin(time + index * 0.4) * 0.6 + (Math.random() - 0.5) * 1.0;
         const height = Math.max(
           3,
-          Math.min(maxHeight, baseHeight + normalizedLevel * (maxHeight - baseHeight) + variation),
+          Math.min(
+            maxHeight,
+            baseHeight + normalizedLevel * (maxHeight - baseHeight) + variation,
+          ),
         );
         return (
           <div
@@ -186,63 +206,68 @@ const FloatingPill = ({
   return (
     <motion.div
       initial={{ scale: 0.8, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1, y: 0 }}
-      exit={{ scale: 0.96, opacity: 0, y: 12 }}
+      animate={{ scale: 1, opacity: 1 }}
+      exit={{ scale: 0.96, opacity: 0 }}
       transition={{ type: "spring", damping: 26, stiffness: 340, mass: 0.9 }}
-      className="fixed bottom-0 left-1/2 z-[999999] -translate-x-1/2"
+      className="fixed bottom-2 left-1/2 z-[999999] -translate-x-1/2"
       onClick={() => {
         if (shouldRecord) onStop();
       }}
     >
-      <AnimatePresence mode="wait">
-        {status === "processing" ? (
-          <motion.div
-            key="transcribing"
-            initial={{ scale: 0.85, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.85, opacity: 0 }}
-            className="flex h-8 w-20 items-center justify-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]"
-          >
-            <div className="flex gap-1.5">
-              <span className="loading-dot" />
-              <span className="loading-dot" />
-              <span className="loading-dot" />
-            </div>
-          </motion.div>
-        ) : status === "error" ? (
-          <motion.div
-            key="error"
-            initial={{ scale: 0.85, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.85, opacity: 0 }}
-            className="flex h-8 min-w-[140px] items-center justify-center rounded-2xl border border-red-300/30 bg-red-500/95 px-[15px] text-white shadow-[0_4px_12px_rgba(255,59,48,0.3)]"
-          >
-            <span className="mr-1.5 text-sm">⚠️</span>
-            <span className="max-w-[220px] truncate text-xs font-medium">
-              {error || "Transcription error"}
-            </span>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="recording"
-            initial={{ scale: 0.85, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.85, opacity: 0 }}
-            className="flex h-8 w-[120px] items-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]"
-          >
-            <JarvisWaveBars audioLevel={audioLevel} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {status === "processing" ? (
+        <div className="flex h-8 w-20 items-center justify-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]">
+          <div className="flex gap-1.5">
+            <span className="loading-dot" />
+            <span className="loading-dot" />
+            <span className="loading-dot" />
+          </div>
+        </div>
+      ) : status === "error" ? (
+        <div className="flex h-8 min-w-[140px] items-center justify-center rounded-2xl border border-red-300/30 bg-red-500/95 px-[15px] text-white shadow-[0_4px_12px_rgba(255,59,48,0.3)]">
+          <span className="mr-1.5 text-sm">⚠️</span>
+          <span className="max-w-[220px] truncate text-xs font-medium">
+            {error || "Transcription error"}
+          </span>
+        </div>
+      ) : (
+        <div className="flex h-8 w-[120px] items-center rounded-2xl border border-white/20 bg-[rgba(20,20,20,0.95)] px-[15px] shadow-[0_4px_12px_rgba(0,0,0,0.2)] backdrop-blur-[15px]">
+          <JarvisWaveBars audioLevel={audioLevel} />
+        </div>
+      )}
     </motion.div>
   );
 };
+
+const CleanButton = ({
+  onClick,
+  disabled,
+  className,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    className={`inline-flex h-8 items-center justify-center rounded-lg px-3 text-[13px] font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-white/10 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
+      className || ""
+    }`}
+  >
+    {children}
+  </button>
+);
 
 function ModelManager() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [activeDownload, setActiveDownload] = useState<string>();
+  const [downloadProgress, setDownloadProgress] = useState<
+    Record<string, ModelDownloadProgressEvent>
+  >({});
   const [activeModel, setActiveModel] = useState<string>();
   const [tab, setTab] = useState<"downloaded" | "library">("downloaded");
 
@@ -267,20 +292,53 @@ function ModelManager() {
     loadModels();
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen<ModelDownloadProgressEvent>(
+        "model-download-progress",
+        (event) => {
+          const progress = event.payload;
+          setDownloadProgress((prev) => ({
+            ...prev,
+            [progress.model]: progress,
+          }));
+          if (progress.error) {
+            setError(progress.error);
+          }
+        },
+      );
+    };
+
+    void setup();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const onDownload = async (model: string) => {
-    console.log("📥 Starting download for model:", model);
     setActiveDownload(model);
     setError(undefined);
+    setDownloadProgress((prev) => ({
+      ...prev,
+      [model]: {
+        model,
+        stage: "queued",
+        downloaded_bytes: 0,
+        total_bytes: undefined,
+        percent: 0,
+        done: false,
+        error: undefined,
+        message: "Queued",
+      },
+    }));
     try {
       await invoke("download_model", { model });
-      console.log("✅ Download completed for:", model);
-      await loadModels();
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error("❌ Download failed:", errorMsg);
-      setError(errorMsg);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActiveDownload(undefined);
+      await loadModels();
     }
   };
 
@@ -295,161 +353,276 @@ function ModelManager() {
   };
 
   const downloadedModels = models.filter((m) => m.downloaded);
+  const activeModelInfo = models.find((m) => m.name === activeModel);
+  const libraryModels = models.filter((m) => m.can_download);
+
+  // Tab Component
+  const TabButton = ({
+    active,
+    onClick,
+    children,
+  }: {
+    active: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+  }) => (
+    <button
+      onClick={onClick}
+      className={`relative px-4 py-1.5 text-[13px] font-medium transition-colors duration-300 ${
+        active ? "text-white" : "text-white/40 hover:text-white/60"
+      }`}
+    >
+      {active && (
+        <motion.div
+          layoutId="activeTabIndicator"
+          className="absolute inset-0 -z-10 rounded-full bg-white/10"
+          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+        />
+      )}
+      {children}
+    </button>
+  );
 
   return (
-    <div className="h-screen w-screen bg-zinc-950 text-zinc-100 p-6 overflow-auto">
-      <div className="mx-auto max-w-3xl">
-        <div className="flex items-end justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Model Manager</h1>
-            <p className="text-zinc-400 text-sm mt-1">
-              Download Whisper models locally. These stay on-device.
-            </p>
-            {downloadedModels.length > 0 && (
-              <div className="mt-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                <p className="text-blue-300 text-sm font-medium mb-1">
-                  🎮 Hold Ctrl + Shift together to record
-                </p>
-                <p className="text-zinc-400 text-xs">
-                  Press and hold both Ctrl and Shift keys, speak, then release either key to stop and transcribe. Check the console for key detection logs.
-                </p>
+    <div className="flex h-screen w-screen flex-col bg-[#030303] text-[#EDEDED] selection:bg-indigo-500/20">
+      {/* Subtle Background Gradients */}
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div className="absolute -left-[20%] -top-[20%] h-[600px] w-[600px] rounded-full bg-indigo-500/5 blur-[120px]" />
+        <div className="absolute -bottom-[20%] -right-[20%] h-[600px] w-[600px] rounded-full bg-blue-500/5 blur-[120px]" />
+      </div>
+
+      {/* Header Area */}
+      <div className="relative z-10 border-b border-white/[0.04] bg-[#030303]/80 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-white/10 to-white/5 shadow-inner ring-1 ring-white/10">
+              <svg
+                className="h-5 w-5 text-white/90"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-[15px] font-medium leading-none tracking-tight text-white/90">
+                Voice Models
+              </h1>
+              <p className="mt-1 text-[13px] text-white/40">
+                Local speech recognition engines
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-full bg-white/[0.03] p-1 ring-1 ring-white/[0.04]">
+            <TabButton
+              active={tab === "downloaded"}
+              onClick={() => setTab("downloaded")}
+            >
+              Installed
+            </TabButton>
+            <TabButton
+              active={tab === "library"}
+              onClick={() => setTab("library")}
+            >
+              Library
+            </TabButton>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="relative z-10 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl px-6 py-8">
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/10 bg-red-500/5 p-4 text-red-200/90 shadow-lg shadow-red-500/5"
+            >
+              <svg className="mt-0.5 h-4 w-4 shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="text-[13px] leading-relaxed">{error}</p>
+            </motion.div>
+          )}
+
+          <div className="space-y-3">
+            {loading && models.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-32 text-white/20">
+                <span className="loading-dot mb-4 h-1.5 w-1.5 rounded-full bg-current" />
+                <span className="text-[13px]">Loading models...</span>
+              </div>
+            ) : tab === "downloaded" ? (
+              downloadedModels.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/5 bg-white/[0.01] py-32 text-center">
+                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.03]">
+                    <svg className="h-6 w-6 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 12H4" />
+                    </svg>
+                  </div>
+                  <p className="text-[14px] font-medium text-white/50">No models installed</p>
+                  <button onClick={() => setTab("library")} className="mt-4 text-[13px] font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
+                    Browse Library &rarr;
+                  </button>
+                </div>
+              ) : (
+                downloadedModels.map((model) => (
+                  <ModelCard
+                    key={model.name}
+                    model={model}
+                    isActive={activeModel === model.name}
+                    onAction={() => onSelectModel(model.name)}
+                    actionLabel={activeModel === model.name ? "Active" : "Activate"}
+                    actionDisabled={activeModel === model.name}
+                  />
+                ))
+              )
+            ) : libraryModels.length === 0 ? (
+              <div className="py-20 text-center text-[13px] text-white/30">
+                No models available.
+              </div>
+            ) : (
+              libraryModels.map((model) => (
+                <ModelCard
+                  key={model.name}
+                  model={model}
+                  isDownloaded={model.downloaded}
+                  isActive={activeModel === model.name}
+                  isDownloading={activeDownload === model.name}
+                  downloadProgress={downloadProgress[model.name]}
+                  onAction={() =>
+                    model.downloaded
+                      ? void onSelectModel(model.name)
+                      : void onDownload(model.name)
+                  }
+                  actionLabel={
+                    activeModel === model.name
+                      ? "Active"
+                      : model.downloaded
+                        ? "Activate"
+                        : activeDownload === model.name
+                          ? "Downloading"
+                          : "Download"
+                  }
+                  actionDisabled={!!activeDownload || activeModel === model.name}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModelCard({
+  model,
+  isDownloaded,
+  isActive,
+  isDownloading,
+  downloadProgress,
+  onAction,
+  actionLabel,
+  actionDisabled,
+}: {
+  model: ModelInfo;
+  isDownloaded?: boolean;
+  isActive?: boolean;
+  isDownloading?: boolean;
+  downloadProgress?: ModelDownloadProgressEvent;
+  onAction: () => void;
+  actionLabel: React.ReactNode;
+  actionDisabled?: boolean;
+}) {
+  const percent =
+    typeof downloadProgress?.percent === "number"
+      ? Math.max(0, Math.min(100, downloadProgress.percent))
+      : 0;
+
+  return (
+    <div
+      className={`group relative overflow-hidden rounded-xl border transition-all duration-300 ${
+        isActive
+          ? "border-indigo-500/20 bg-indigo-500/[0.04]"
+          : "border-white/[0.03] bg-white/[0.01] hover:border-white/[0.08] hover:bg-white/[0.03]"
+      }`}
+    >
+      {/* Slim Progress Bar at Bottom */}
+      {isDownloading && (
+        <div className="absolute bottom-0 left-0 h-[2px] w-full bg-white/5">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${percent}%` }}
+            className="h-full bg-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.5)]"
+          />
+        </div>
+      )}
+
+      <div className="relative z-10 flex items-center justify-between p-5">
+        <div className="min-w-0 flex-1 pr-6">
+          <div className="flex items-center gap-3">
+            <h3 className={`truncate text-[15px] font-medium tracking-tight ${isActive ? "text-white" : "text-white/80"}`}>
+              {model.name}
+            </h3>
+            {isActive && (
+              <div className="flex items-center gap-1.5 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2 py-0.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.8)]" />
+                <span className="text-[10px] font-medium text-indigo-200">ACTIVE</span>
+              </div>
+            )}
+            {!isActive && isDownloaded && (
+              <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(74,222,128,0.8)]" />
+                <span className="text-[10px] font-medium text-emerald-200">DOWNLOADED</span>
               </div>
             )}
           </div>
-          <button
-            className="px-3 py-1.5 text-sm rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors"
-            onClick={loadModels}
-            disabled={loading}
-          >
-            Refresh
-          </button>
-        </div>
-
-        <div className="mb-4 inline-flex rounded-lg border border-zinc-800 overflow-hidden">
-          <button
-            className={`px-4 py-2 text-sm transition-colors ${
-              tab === "downloaded"
-                ? "bg-zinc-200 text-zinc-900"
-                : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-            }`}
-            onClick={() => setTab("downloaded")}
-          >
-            Downloaded
-          </button>
-          <button
-            className={`px-4 py-2 text-sm transition-colors border-l border-zinc-800 ${
-              tab === "library"
-                ? "bg-zinc-200 text-zinc-900"
-                : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-            }`}
-            onClick={() => setTab("library")}
-          >
-            Library
-          </button>
-        </div>
-
-        {error && (
-          <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-            {error}
-          </div>
-        )}
-
-        {tab === "downloaded" ? (
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            <div className="grid grid-cols-[1.2fr_0.8fr_0.6fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/80">
-              <div>Model</div>
-              <div>Runtime</div>
-              <div className="text-right">Select</div>
-            </div>
-            {loading ? (
-              <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
-            ) : downloadedModels.length === 0 ? (
-              <div className="px-4 py-8 text-sm text-zinc-400">
-                No downloaded models yet. Go to Library and download one.
-              </div>
-            ) : (
-              downloadedModels.map((model) => {
-                const selected = activeModel === model.name;
-                return (
-                  <div
-                    key={model.name}
-                    className="grid grid-cols-[1.2fr_0.8fr_0.6fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
-                  >
-                    <div className="font-medium">{model.name}</div>
-                    <div className="text-zinc-400 text-sm">{model.runtime}</div>
-                    <div className="text-right">
-                      <button
-                        className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                          selected
-                            ? "bg-emerald-500/20 text-emerald-300"
-                            : "bg-zinc-800 hover:bg-zinc-700 text-zinc-100"
-                        }`}
-                        onClick={() => onSelectModel(model.name)}
-                        disabled={selected}
-                      >
-                        {selected ? "Selected" : "Use"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+          
+          <div className="mt-2 flex items-center gap-4 text-[13px] text-white/40">
+            <span className="flex items-center gap-1.5">
+              <span>{MODEL_SIZE_HINTS[model.name] || "Unknown size"}</span>
+            </span>
+            <span className="h-1 w-1 rounded-full bg-white/10" />
+            <span className="flex items-center gap-1.5">
+              <span>{model.runtime}</span>
+            </span>
+            {isDownloading && (
+              <>
+                 <span className="h-1 w-1 rounded-full bg-white/10" />
+                 <span className="text-indigo-300/90 font-medium">
+                  {Math.round(percent)}%
+                 </span>
+              </>
             )}
           </div>
-        ) : (
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            <div className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 text-xs uppercase tracking-wide text-zinc-400 bg-zinc-900/80">
-              <div>Model</div>
-              <div>Size</div>
-              <div>Runtime</div>
-              <div className="text-right">Action</div>
-            </div>
-            {loading ? (
-              <div className="px-4 py-8 text-sm text-zinc-400">Loading models...</div>
+        </div>
+
+        <div className="shrink-0">
+          <CleanButton
+            onClick={onAction}
+            disabled={actionDisabled}
+            className={
+              isActive
+                ? "cursor-default text-indigo-300/50"
+                : actionDisabled && !isDownloading
+                  ? "cursor-not-allowed bg-transparent text-white/10"
+                  : "bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
+            }
+          >
+            {isDownloading ? (
+               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
             ) : (
-              models.map((model) => {
-                const downloading = activeDownload === model.name;
-                return (
-                  <div
-                    key={model.name}
-                    className="grid grid-cols-[1.2fr_0.7fr_0.8fr_0.7fr] gap-2 px-4 py-3 border-t border-zinc-900 items-center"
-                  >
-                    <div>
-                      <div className="font-medium">{model.name}</div>
-                      {model.note && (
-                        <div className="text-xs text-zinc-500 mt-0.5">{model.note}</div>
-                      )}
-                    </div>
-                    <div className="text-zinc-400 text-sm">
-                      {MODEL_SIZE_HINTS[model.name] ?? "Unknown"}
-                    </div>
-                    <div className="text-zinc-400 text-sm">{model.runtime}</div>
-                    <div className="text-right">
-                      <button
-                        className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
-                          model.downloaded
-                            ? "bg-emerald-500/20 text-emerald-300 cursor-default"
-                            : !model.can_download
-                              ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-                            : "bg-blue-600 hover:bg-blue-500 text-white"
-                        }`}
-                        disabled={model.downloaded || downloading || !model.can_download}
-                        onClick={() => onDownload(model.name)}
-                      >
-                        {model.downloaded
-                          ? "Downloaded"
-                          : !model.can_download
-                            ? "Coming soon"
-                          : downloading
-                            ? "Downloading..."
-                            : "Download"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+              actionLabel
             )}
-          </div>
-        )}
+          </CleanButton>
+        </div>
       </div>
     </div>
   );
@@ -460,7 +633,13 @@ function DictationPillApp() {
   const [sttStatus, setSttStatus] = useState<TranscriptionStatus>("idle");
   const [sttError, setSttError] = useState<string>();
   const previousFnHeld = useRef(false);
+  const fnHeldRef = useRef(false);
   const { playStartSound, playStopSound } = useFeedbackSounds(true);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    fnHeldRef.current = fnHeld;
+  }, [fnHeld]);
 
   useEffect(() => {
     let unlistenHold: (() => void) | undefined;
@@ -470,7 +649,6 @@ function DictationPillApp() {
     const setupListener = async () => {
       try {
         unlistenHold = await listen<boolean>("fn-hold", (event) => {
-          console.log("🎯 fn-hold event received:", event.payload);
           setFnHeld(event.payload);
         });
         unlistenToggle = await listen("global-shortcut-pressed", () => {
@@ -480,7 +658,10 @@ function DictationPillApp() {
           "transcription-status",
           (event) => {
             setSttStatus(event.payload.status);
-            if (event.payload.status === "listening" || event.payload.status === "idle") {
+            if (
+              event.payload.status === "listening" ||
+              event.payload.status === "idle"
+            ) {
               setSttError(undefined);
             }
             if (event.payload.error) {
@@ -488,6 +669,11 @@ function DictationPillApp() {
             } else if (event.payload.status !== "error") {
               setSttError(undefined);
             }
+
+            // NOTE: Do NOT hide the window here. The main window is transparent
+            // and ignores cursor events, so it's effectively invisible when the
+            // pill is not shown. Hiding it causes macOS to deactivate our
+            // Accessory-policy app, which can terminate the process.
           },
         );
       } catch (e) {
@@ -496,7 +682,14 @@ function DictationPillApp() {
     };
     setupListener();
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "`") {
+        setFnHeld((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
+      window.removeEventListener("keydown", handleKeyDown);
       if (unlistenHold) unlistenHold();
       if (unlistenToggle) unlistenToggle();
       if (unlistenStatus) unlistenStatus();
@@ -504,23 +697,32 @@ function DictationPillApp() {
   }, []);
 
   useEffect(() => {
-    console.log("🔄 fnHeld state changed:", fnHeld);
+    // Force transparency on mount
+    document.documentElement.style.backgroundColor = "transparent";
+    document.body.style.backgroundColor = "transparent";
+    const root = document.getElementById("root");
+    if (root) root.style.backgroundColor = "transparent";
+
+    // Also remove any potential shadows or backgrounds from the window itself logic via class manipulation if needed
+    // But mainly targeting root elements.
+
     if (fnHeld && !previousFnHeld.current) {
-      console.log("▶️ Starting sound");
       playStartSound();
     } else if (!fnHeld && previousFnHeld.current) {
-      console.log("⏹️ Stopping sound");
       playStopSound();
     }
     previousFnHeld.current = fnHeld;
   }, [fnHeld, playStartSound, playStopSound]);
 
   const showPill = fnHeld || sttStatus !== "idle";
-  console.log("👁️ Render state - fnHeld:", fnHeld, "sttStatus:", sttStatus, "showPill:", showPill);
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center overflow-hidden bg-transparent">
+    <div
+      className="h-screen w-screen flex items-center justify-center overflow-visible bg-transparent"
+      style={{ background: "transparent", backgroundColor: "transparent" }}
+    >
       <style>{`
+        html, body, #root { background: transparent !important; }
         .loading-dot {
           width: 6px;
           height: 6px;

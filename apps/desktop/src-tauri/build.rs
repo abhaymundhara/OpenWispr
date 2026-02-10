@@ -4,6 +4,7 @@ use std::process::Command;
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
+    // Windows: Check for Vulkan hardware acceleration
     if target_os == "windows" {
         let has_clang = Command::new("clang").arg("--version").output().is_ok();
         let has_vulkan = env::var("VULKAN_SDK").is_ok();
@@ -20,6 +21,15 @@ fn main() {
             }
             println!("cargo:warning=Building in CPU-only mode for maximum compatibility.");
         }
+    }
+
+    // macOS: Configure rpath for dynamic dependencies
+    #[cfg(target_os = "macos")]
+    {
+        // sherpa-rs-sys dynamic deps (e.g. libonnxruntime*.dylib) are copied
+        // next to the executable in target/<profile>. Expose that directory via rpath.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
     }
 
     tauri_build::build();

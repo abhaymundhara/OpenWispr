@@ -1,14 +1,16 @@
 use crate::{
-    AudioFormat, Result, SttConfig, SttError, TranscriptSegment, Transcription, TranscriptionTask,
+    emit_model_download_progress, AudioFormat, ModelDownloadProgress, Result, SttConfig, SttError,
+    TranscriptSegment, Transcription, TranscriptionTask,
 };
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use whisper_rs::{
-    get_lang_str, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
+    get_lang_str, install_logging_hooks, FullParams, SamplingStrategy, WhisperContext,
+    WhisperContextParameters,
 };
 
 pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -26,6 +28,14 @@ pub(crate) struct SharedWhisperAdapter {
     state: Arc<RwLock<SharedState>>,
 }
 
+fn verbose_logs_enabled() -> bool {
+    std::env::var("OPENWISPR_VERBOSE_LOGS")
+        .ok()
+        .as_deref()
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
 impl SharedWhisperAdapter {
     pub(crate) fn new(runtime_name: &'static str) -> Self {
         Self {
@@ -35,6 +45,10 @@ impl SharedWhisperAdapter {
     }
 
     pub(crate) async fn initialize(&self, config: SttConfig) -> Result<()> {
+        // Route whisper.cpp / ggml logs through whisper-rs hooks. Without a logging backend
+        // enabled, this effectively silences native library spam in terminal output.
+        install_logging_hooks();
+
         let runtime_name = self.runtime_name;
         let model_path = tokio::task::spawn_blocking({
             let config = config.clone();
@@ -128,22 +142,24 @@ impl SharedWhisperAdapter {
             ));
         }
 
-        let raw_stats = signal_stats(audio_data);
-        let prepared_stats = signal_stats(&prepared_audio);
-        println!(
-            "[stt] signal raw: samples={} peak={:.5} rms={:.5} zcr={:.5}",
-            audio_data.len(),
-            raw_stats.peak,
-            raw_stats.rms,
-            raw_stats.zero_crossing_rate
-        );
-        println!(
-            "[stt] signal prepared: samples={} peak={:.5} rms={:.5} zcr={:.5}",
-            prepared_audio.len(),
-            prepared_stats.peak,
-            prepared_stats.rms,
-            prepared_stats.zero_crossing_rate
-        );
+        if verbose_logs_enabled() {
+            let raw_stats = signal_stats(audio_data);
+            let prepared_stats = signal_stats(&prepared_audio);
+            println!(
+                "[stt] signal raw: samples={} peak={:.5} rms={:.5} zcr={:.5}",
+                audio_data.len(),
+                raw_stats.peak,
+                raw_stats.rms,
+                raw_stats.zero_crossing_rate
+            );
+            println!(
+                "[stt] signal prepared: samples={} peak={:.5} rms={:.5} zcr={:.5}",
+                prepared_audio.len(),
+                prepared_stats.peak,
+                prepared_stats.rms,
+                prepared_stats.zero_crossing_rate
+            );
+        }
         debug!(
             "{} transcription started (raw_samples={}, prepared_samples={})",
             self.runtime_name,
@@ -185,13 +201,6 @@ impl SharedWhisperAdapter {
         ]
     }
 
-    pub(crate) fn current_model(&self) -> Option<String> {
-        self.state
-            .blocking_read()
-            .config
-            .as_ref()
-            .map(|cfg| cfg.model_name.clone())
-    }
 }
 
 fn preferred_backend() -> (bool, &'static str) {
@@ -248,7 +257,9 @@ fn run_whisper_transcription(
     }
 
     if requested_language.is_none() {
-        println!("[stt] primary decode empty, retrying with auto language detection");
+        if verbose_logs_enabled() {
+            println!("[stt] primary decode empty, retrying with auto language detection");
+        }
         let auto_attempt = decode_once(
             &context,
             &audio_data,
@@ -256,17 +267,21 @@ fn run_whisper_transcription(
             &task,
             DecodeProfile::Primary,
         )?;
-        println!(
-            "[stt] auto-language decode chars={} segments={}",
-            auto_attempt.text.chars().count(),
-            auto_attempt.segments.len()
-        );
+        if verbose_logs_enabled() {
+            println!(
+                "[stt] auto-language decode chars={} segments={}",
+                auto_attempt.text.chars().count(),
+                auto_attempt.segments.len()
+            );
+        }
         if !auto_attempt.text.trim().is_empty() || !auto_attempt.segments.is_empty() {
             return Ok(auto_attempt);
         }
     }
 
-    println!("[stt] primary decode empty, retrying with permissive fallback");
+    if verbose_logs_enabled() {
+        println!("[stt] primary decode empty, retrying with permissive fallback");
+    }
     let permissive_attempt = decode_once(
         &context,
         &audio_data,
@@ -274,11 +289,13 @@ fn run_whisper_transcription(
         &task,
         DecodeProfile::PermissiveFallback,
     )?;
-    println!(
-        "[stt] permissive decode chars={} segments={}",
-        permissive_attempt.text.chars().count(),
-        permissive_attempt.segments.len()
-    );
+    if verbose_logs_enabled() {
+        println!(
+            "[stt] permissive decode chars={} segments={}",
+            permissive_attempt.text.chars().count(),
+            permissive_attempt.segments.len()
+        );
+    }
 
     if permissive_attempt.text.trim().is_empty() && permissive_attempt.segments.is_empty() {
         warn!("whisper returned empty transcription result after all decode attempts");
@@ -483,49 +500,161 @@ fn download_model(model_name: &str, output_path: &Path) -> Result<()> {
     let filename = model_filename(model_name);
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");
 
-    eprintln!("📥 Starting download of {} from {}", model_name, url);
-    eprintln!("📁 Saving to: {}", output_path.display());
-
     let response = ureq::get(&url)
         .call()
         .map_err(|e| {
-            let err_msg = format!("failed to download {url}: {e}");
-            eprintln!("❌ Download error: {}", err_msg);
-            SttError::ModelLoadError(err_msg)
+            let message = format!("failed to download {url}: {e}");
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.to_string(),
+                stage: "download".to_string(),
+                downloaded_bytes: 0,
+                total_bytes: None,
+                percent: None,
+                done: true,
+                error: Some(message.clone()),
+                message: Some("Download request failed".to_string()),
+            });
+            SttError::ModelLoadError(message)
         })?;
+    let total_bytes = response
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0);
+
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_name.to_string(),
+        stage: "download".to_string(),
+        downloaded_bytes: 0,
+        total_bytes,
+        percent: Some(0.0),
+        done: false,
+        error: None,
+        message: Some("Starting model download".to_string()),
+    });
+
     let mut reader = response.into_reader();
 
     let tmp_path = output_path.with_extension("download");
     let file = File::create(&tmp_path).map_err(|e| {
-        SttError::ModelLoadError(format!(
+        let message = format!(
             "failed to create temporary model file {}: {e}",
             tmp_path.display()
-        ))
+        );
+        emit_model_download_progress(ModelDownloadProgress {
+            model_name: model_name.to_string(),
+            stage: "download".to_string(),
+            downloaded_bytes: 0,
+            total_bytes,
+            percent: None,
+            done: true,
+            error: Some(message.clone()),
+            message: Some("Failed to create temporary file".to_string()),
+        });
+        SttError::ModelLoadError(message)
     })?;
     let mut writer = BufWriter::new(file);
 
-    eprintln!("⏳ Downloading... (this may take several minutes)");
-    let bytes_copied = io::copy(&mut reader, &mut writer).map_err(|e| {
-        let err_msg = format!("failed while writing model {}: {e}", output_path.display());
-        eprintln!("❌ Write error: {}", err_msg);
-        SttError::ModelLoadError(err_msg)
-    })?;
-    eprintln!("✅ Downloaded {} bytes", bytes_copied);
-    
+    let mut downloaded_bytes = 0_u64;
+    let mut last_emitted = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buffer).map_err(|e| {
+            let message = format!("failed while reading model stream {}: {e}", output_path.display());
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.to_string(),
+                stage: "download".to_string(),
+                downloaded_bytes,
+                total_bytes,
+                percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+                done: true,
+                error: Some(message.clone()),
+                message: Some("Download stream read failed".to_string()),
+            });
+            SttError::ModelLoadError(message)
+        })?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..n]).map_err(|e| {
+            let message = format!("failed while writing model {}: {e}", output_path.display());
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.to_string(),
+                stage: "download".to_string(),
+                downloaded_bytes,
+                total_bytes,
+                percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+                done: true,
+                error: Some(message.clone()),
+                message: Some("Write to temporary file failed".to_string()),
+            });
+            SttError::ModelLoadError(message)
+        })?;
+        downloaded_bytes += n as u64;
+
+        if downloaded_bytes.saturating_sub(last_emitted) >= 256 * 1024
+            || total_bytes.is_some_and(|total| downloaded_bytes >= total)
+        {
+            emit_model_download_progress(ModelDownloadProgress {
+                model_name: model_name.to_string(),
+                stage: "download".to_string(),
+                downloaded_bytes,
+                total_bytes,
+                percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+                done: false,
+                error: None,
+                message: Some("Downloading model".to_string()),
+            });
+            last_emitted = downloaded_bytes;
+        }
+    }
+
     writer.flush().map_err(|e| {
-        SttError::ModelLoadError(format!(
+        let message = format!(
             "failed to flush downloaded model {}: {e}",
             output_path.display()
-        ))
+        );
+        emit_model_download_progress(ModelDownloadProgress {
+            model_name: model_name.to_string(),
+            stage: "download".to_string(),
+            downloaded_bytes,
+            total_bytes,
+            percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+            done: true,
+            error: Some(message.clone()),
+            message: Some("Failed to flush temporary file".to_string()),
+        });
+        SttError::ModelLoadError(message)
     })?;
 
     std::fs::rename(&tmp_path, output_path).map_err(|e| {
-        SttError::ModelLoadError(format!(
+        let message = format!(
             "failed to finalize downloaded model {}: {e}",
             output_path.display()
-        ))
+        );
+        emit_model_download_progress(ModelDownloadProgress {
+            model_name: model_name.to_string(),
+            stage: "download".to_string(),
+            downloaded_bytes,
+            total_bytes,
+            percent: total_bytes.map(|t| ((downloaded_bytes as f32 / t as f32) * 100.0).min(100.0)),
+            done: true,
+            error: Some(message.clone()),
+            message: Some("Failed to finalize model file".to_string()),
+        });
+        SttError::ModelLoadError(message)
     })?;
-    eprintln!("✅ Model download complete!");
+
+    emit_model_download_progress(ModelDownloadProgress {
+        model_name: model_name.to_string(),
+        stage: "ready".to_string(),
+        downloaded_bytes,
+        total_bytes,
+        percent: Some(100.0),
+        done: true,
+        error: None,
+        message: Some("Model download complete".to_string()),
+    });
+
     Ok(())
 }
 

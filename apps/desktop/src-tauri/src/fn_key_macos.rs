@@ -7,8 +7,11 @@ use objc2_core_graphics::{
 };
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Wry};
 use crate::audio::{self, AudioCapture};
+
+static TASK_HANDLE: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
 
 struct FnHoldState {
     app: AppHandle<Wry>,
@@ -52,11 +55,16 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
                 eprintln!("Failed to start recording on Fn press: {}", err);
             }
         } else {
-            tauri::async_runtime::spawn(async move {
+            // Store the JoinHandle in a static to prevent it from being dropped
+            let handle = tauri::async_runtime::spawn(async move {
                 if let Err(err) = audio::stop_recording_for_capture(capture, app_handle).await {
                     eprintln!("Failed to stop recording on Fn release: {}", err);
                 }
             });
+            
+            if let Ok(mut task) = TASK_HANDLE.lock() {
+                *task = Some(handle);
+            }
         }
     }
 
