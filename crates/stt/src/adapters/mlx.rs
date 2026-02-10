@@ -2,14 +2,15 @@
 //! Routes between whisper.cpp, Sherpa ONNX and MLX Parakeet based on selected model.
 
 use crate::{
-    is_mlx_model_name, is_sherpa_model_name, AudioFormat, Result, SttAdapter, SttConfig,
-    Transcription,
+    is_mlx_model_name, is_mlx_whisper_model_name, is_sherpa_model_name, AudioFormat, Result,
+    SttAdapter, SttConfig, Transcription,
 };
 use async_trait::async_trait;
 use tracing::{info, warn};
 
 use super::backend::SharedWhisperAdapter;
 use super::mlx_parakeet::SharedMlxParakeetAdapter;
+use super::mlx_whisper::SharedMlxWhisperAdapter;
 use super::sherpa::SharedSherpaAdapter;
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +18,7 @@ pub struct MlxAdapter {
     whisper: SharedWhisperAdapter,
     sherpa: SharedSherpaAdapter,
     mlx_parakeet: SharedMlxParakeetAdapter,
+    mlx_whisper: SharedMlxWhisperAdapter,
     current_model: Arc<Mutex<Option<String>>>,
 }
 
@@ -27,6 +29,7 @@ impl MlxAdapter {
             whisper: SharedWhisperAdapter::new("macOS whisper backend"),
             sherpa: SharedSherpaAdapter::new(),
             mlx_parakeet: SharedMlxParakeetAdapter::new(),
+            mlx_whisper: SharedMlxWhisperAdapter::new(),
             current_model: Arc::new(Mutex::new(None)),
         }
     }
@@ -54,6 +57,8 @@ impl SttAdapter for MlxAdapter {
             self.sherpa.initialize(config).await?;
         } else if is_mlx_model_name(&model_name) {
             self.mlx_parakeet.initialize(config).await?;
+        } else if is_mlx_whisper_model_name(&model_name) {
+            self.mlx_whisper.initialize(config).await?;
         } else {
             self.whisper.initialize(config).await?;
         }
@@ -76,6 +81,8 @@ impl SttAdapter for MlxAdapter {
             self.sherpa.transcribe(audio_data, format).await
         } else if is_mlx_model_name(&model_name) {
             self.mlx_parakeet.transcribe(audio_data, format).await
+        } else if is_mlx_whisper_model_name(&model_name) {
+            self.mlx_whisper.transcribe(audio_data, format).await
         } else {
             self.whisper.transcribe(audio_data, format).await
         }
@@ -86,6 +93,8 @@ impl SttAdapter for MlxAdapter {
             self.sherpa.is_model_available(model_name).await
         } else if is_mlx_model_name(model_name) {
             self.mlx_parakeet.is_model_available(model_name).await
+        } else if is_mlx_whisper_model_name(model_name) {
+            self.mlx_whisper.is_model_available(model_name).await
         } else {
             self.whisper.is_model_available(model_name).await
         }

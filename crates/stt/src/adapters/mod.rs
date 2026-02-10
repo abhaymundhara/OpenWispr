@@ -12,6 +12,8 @@ pub(crate) mod mlx_parakeet;
 #[cfg(target_os = "macos")]
 pub mod mlx;
 
+pub mod mlx_whisper;
+
 #[cfg(target_os = "windows")]
 pub mod whisper;
 

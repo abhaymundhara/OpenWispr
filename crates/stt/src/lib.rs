@@ -10,6 +10,7 @@ pub mod adapters;
 
 pub const SHERPA_PARAKEET_INT8_MODEL: &str = "sherpa-onnx/parakeet-tdt-0.6b-v3-int8";
 pub const MLX_PARAKEET_V2_MODEL: &str = "animaslabs/parakeet-tdt-0.6b-v3-mlx-8bit";
+pub const MLX_HINDI_HINGLISH_MODEL: &str = "Oriserve/Whisper-Hindi2Hinglish-Apex";
 
 pub fn is_sherpa_model_name(model_name: &str) -> bool {
     model_name == SHERPA_PARAKEET_INT8_MODEL
@@ -17,6 +18,10 @@ pub fn is_sherpa_model_name(model_name: &str) -> bool {
 
 pub fn is_mlx_model_name(model_name: &str) -> bool {
     model_name == MLX_PARAKEET_V2_MODEL
+}
+
+pub fn is_mlx_whisper_model_name(model_name: &str) -> bool {
+    model_name == MLX_HINDI_HINGLISH_MODEL
 }
 
 #[derive(Debug, Clone)]

@@ -20,11 +20,11 @@ struct MlxState {
     model_ref: Option<String>,
 }
 
-pub(crate) struct SharedMlxParakeetAdapter {
+pub(crate) struct SharedMlxWhisperAdapter {
     state: Arc<RwLock<MlxState>>,
 }
 
-impl SharedMlxParakeetAdapter {
+impl SharedMlxWhisperAdapter {
     pub(crate) fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(MlxState::default())),
@@ -43,17 +43,18 @@ impl SharedMlxParakeetAdapter {
             percent: Some(0.0),
             done: false,
             error: None,
-            message: Some("Preparing MLX runtime".to_string()),
+            message: Some("Preparing MLX Whisper runtime".to_string()),
         });
 
         tokio::task::spawn_blocking({
             let model_ref = model_ref.clone();
             let cache_dir = cache_dir.clone();
-            move || ensure_parakeet_ready(&model_ref, &cache_dir)
+            move || ensure_whisper_ready(&model_ref, &cache_dir)
         })
         .await
-        .map_err(|e| SttError::ModelLoadError(format!("mlx setup task failed: {e}")))??;
-
+        .map_err(|e| SttError::ModelLoadError(format!("mlx whisper setup task failed: {e}")))??;
+        
+        // Marker file creation to signal readiness
         let marker = marker_file_path(&model_ref)?;
         if let Some(parent) = marker.parent() {
             fs::create_dir_all(parent).map_err(|e| {
@@ -69,6 +70,7 @@ impl SharedMlxParakeetAdapter {
                 marker.display()
             ))
         })?;
+
         emit_model_download_progress(ModelDownloadProgress {
             model_name: model_ref.clone(),
             stage: "ready".to_string(),
@@ -77,7 +79,7 @@ impl SharedMlxParakeetAdapter {
             percent: Some(100.0),
             done: true,
             error: None,
-            message: Some("MLX model ready".to_string()),
+            message: Some("MLX Whisper model ready".to_string()),
         });
 
         let mut state = self.state.write().await;
@@ -96,7 +98,7 @@ impl SharedMlxParakeetAdapter {
             state
                 .model_ref
                 .clone()
-                .ok_or_else(|| SttError::TranscriptionFailed("mlx adapter not initialized".into()))?
+                .ok_or_else(|| SttError::TranscriptionFailed("mlx whisper adapter not initialized".into()))?
         };
 
         let prepared = prepare_audio(audio_data, &format);
@@ -116,7 +118,7 @@ impl SharedMlxParakeetAdapter {
             result
         })
         .await
-        .map_err(|e| SttError::TranscriptionFailed(format!("mlx decode task failed: {e}")))??;
+        .map_err(|e| SttError::TranscriptionFailed(format!("mlx whisper decode task failed: {e}")))??;
 
         let clean = text.trim().to_string();
         let mut segments = Vec::new();
@@ -130,7 +132,7 @@ impl SharedMlxParakeetAdapter {
 
         Ok(Transcription {
             text: clean,
-            language: Some("en".to_string()),
+            language: Some("hi".to_string()), // Default/Guessing Hindi for this specific model, or generic
             confidence: None,
             segments,
         })
@@ -144,7 +146,6 @@ impl SharedMlxParakeetAdapter {
             .map(|path| path.exists())
             .unwrap_or(false)
     }
-
 }
 
 fn resolve_model_ref(config: &SttConfig) -> Result<String> {
@@ -162,7 +163,7 @@ fn resolve_model_ref(config: &SttConfig) -> Result<String> {
     )))
 }
 
-fn ensure_parakeet_ready(model_ref: &str, cache_dir: &Path) -> Result<()> {
+fn ensure_whisper_ready(model_ref: &str, cache_dir: &Path) -> Result<()> {
     emit_model_download_progress(ModelDownloadProgress {
         model_name: model_ref.to_string(),
         stage: "runtime-check".to_string(),
@@ -183,33 +184,142 @@ fn ensure_parakeet_ready(model_ref: &str, cache_dir: &Path) -> Result<()> {
         percent: Some(25.0),
         done: false,
         error: None,
-        message: Some("Preparing parakeet-mlx package".to_string()),
+        message: Some("Preparing mlx-whisper package".to_string()),
     });
-    ensure_parakeet_package_installed(cache_dir)?;
+    ensure_whisper_package_installed(cache_dir)?;
 
     let script = r#"
 import sys
+import os
 import json
-import mlx.nn as nn
-from parakeet_mlx.utils import from_config
-from huggingface_hub import hf_hub_download
+import shutil
+from pathlib import Path
+import mlx.core as mx
+
+# Ensure imports
+try:
+    import mlx_whisper
+    from huggingface_hub import snapshot_download
+except ImportError:
+    print("Missing required packages")
+    sys.exit(1)
 
 model_ref = sys.argv[1]
-cache_dir = sys.argv[2]
+# We use a subdirectory for the converted model to avoid pollution/conflict
+# asking huggingface_hub where it stores is good, but we want a known path for converted weights
+# We will download snapshot to default HF cache, but assume we can read it.
+# Actually, snapshot_download returns the path.
 
-config_path = hf_hub_download(model_ref, "config.json", cache_dir=cache_dir)
-with open(config_path, "r") as f:
-    config = json.load(f)
+print(f"Ensuring model {model_ref} is available...")
+try:
+    # prompt download
+    model_path = snapshot_download(repo_id=model_ref)
+    print(f"Model downloaded to {model_path}")
+except Exception as e:
+    print(f"Error downloading model: {e}")
+    sys.exit(1)
 
-model = from_config(config)
+# Check if we need to convert/patch
+# We define a 'ready' marker or just check for weights.npz and clean config
+# Custom conversion path inside the HF cache might be tricky as it is read-only usually?
+# No, HF cache is user cache. But structure is managed by HF.
+# We should copy/convert to our OWN cache dir for the final ready model.
+override_cache_dir = sys.argv[2]
+dest_dir = Path(override_cache_dir) / "converted_" / model_ref.replace("/", "_")
+dest_dir.mkdir(parents=True, exist_ok=True)
 
-if "quantization" in config:
-    q_config = config["quantization"]
-    nn.quantize(model, bits=q_config["bits"], group_size=q_config["group_size"])
+config_dest = dest_dir / "config.json"
+weights_dest = dest_dir / "weights.npz"
 
-weights_path = hf_hub_download(model_ref, "model.safetensors", cache_dir=cache_dir)
-model.load_weights(weights_path)
+if config_dest.exists() and weights_dest.exists():
+    print("Converted model already exists.")
+else:
+    print("Converting/Patching model...")
+    # 1. Config Patching
+    with open(Path(model_path) / "config.json", "r") as f:
+        hf_config = json.load(f)
+
+    # Mapping HF keys to ModelDimensions keys for mlx-whisper
+    # Based on OpenAI Whisper dimensions
+    mapping = {
+        "num_mel_bins": "n_mels",
+        "max_source_positions": "n_audio_ctx",
+        "d_model": "n_audio_state",
+        "encoder_attention_heads": "n_audio_head",
+        "encoder_layers": "n_audio_layer",
+        "vocab_size": "n_vocab",
+        "max_target_positions": "n_text_ctx",
+        "decoder_attention_heads": "n_text_head",
+        "decoder_layers": "n_text_layer",
+        # n_text_state is usually d_model too
+    }
+
+    new_config = {}
+    for hf_key, mlx_key in mapping.items():
+        if hf_key in hf_config:
+            new_config[mlx_key] = hf_config[hf_key]
+    
+    if "d_model" in hf_config:
+        new_config["n_text_state"] = hf_config["d_model"]
+
+    with open(config_dest, "w") as f:
+        json.dump(new_config, f, indent=2)
+    print("Config patched.")
+
+    # 2. Weights Conversion
+    # We load safetensors and map keys
+    if (Path(model_path) / "model.safetensors").exists():
+        print("Loading safetensors...")
+        weights = mx.load(str(Path(model_path) / "model.safetensors"))
+        new_weights = {}
+        for k, v in weights.items():
+            new_key = k
+            # Strip model. prefix
+            if new_key.startswith("model."):
+                new_key = new_key[6:]
+            
+            # Global mappings
+            if new_key == "encoder.layer_norm.weight": new_key = "encoder.ln_post.weight"
+            elif new_key == "encoder.layer_norm.bias": new_key = "encoder.ln_post.bias"
+            elif new_key == "decoder.layer_norm.weight": new_key = "decoder.ln.weight"
+            elif new_key == "decoder.layer_norm.bias": new_key = "decoder.ln.bias"
+            elif new_key == "decoder.embed_tokens.weight": new_key = "decoder.token_embedding.weight"
+            # dec positional
+            elif new_key == "decoder.embed_positions.weight": new_key = "decoder.positional_embedding"
+            
+            # Block mappings
+            # encoder.layers.X -> encoder.blocks.X
+            if "layers." in new_key:
+                new_key = new_key.replace("layers.", "blocks.")
+            
+            # Sub-block mappings
+            if ".fc1." in new_key: new_key = new_key.replace(".fc1.", ".mlp1.")
+            if ".fc2." in new_key: new_key = new_key.replace(".fc2.", ".mlp2.")
+            if ".final_layer_norm." in new_key: new_key = new_key.replace(".final_layer_norm.", ".mlp_ln.")
+            if ".self_attn_layer_norm." in new_key: new_key = new_key.replace(".self_attn_layer_norm.", ".attn_ln.")
+            
+            if ".self_attn.q_proj." in new_key: new_key = new_key.replace(".self_attn.q_proj.", ".attn.query.")
+            if ".self_attn.k_proj." in new_key: new_key = new_key.replace(".self_attn.k_proj.", ".attn.key.")
+            if ".self_attn.v_proj." in new_key: new_key = new_key.replace(".self_attn.v_proj.", ".attn.value.")
+            if ".self_attn.out_proj." in new_key: new_key = new_key.replace(".self_attn.out_proj.", ".attn.out.")
+            
+            # Filter out encoder positions if MLX doesn't usually use them (sinusoidal)
+            # HF: encoder.embed_positions.weight
+            if new_key == "encoder.embed_positions.weight":
+                continue 
+
+            new_weights[new_key] = v
+            
+        print("Saving converted weights...")
+        mx.savez(str(weights_dest), **new_weights)
+    else:
+        print("model.safetensors not found!")
+        sys.exit(1)
+
+print("Setup complete.")
+print(f"READY_PATH={dest_dir}")
 "#;
+    
     emit_model_download_progress(ModelDownloadProgress {
         model_name: model_ref.to_string(),
         stage: "download".to_string(),
@@ -218,7 +328,7 @@ model.load_weights(weights_path)
         percent: Some(40.0),
         done: false,
         error: None,
-        message: Some("Downloading MLX model weights".to_string()),
+        message: Some("Downloading and converting MLX Whisper model".to_string()),
     });
 
     let python_bin = venv_python_bin(cache_dir);
@@ -234,7 +344,7 @@ model.load_weights(weights_path)
 
     if !output.status.success() {
         let message = format!(
-            "failed to download/load MLX model '{}': {}",
+            "failed to download/convert MLX model '{}': {}",
             model_ref,
             compact_python_error(&output.stderr)
         );
@@ -243,62 +353,45 @@ model.load_weights(weights_path)
             stage: "download".to_string(),
             downloaded_bytes: 0,
             total_bytes: None,
-            percent: Some(40.0),
+            percent: Some(0.0),
             done: true,
             error: Some(message.clone()),
-            message: Some("MLX model setup failed".to_string()),
+            message: Some("MLX Whisper model setup failed".to_string()),
         });
         return Err(SttError::ModelLoadError(message));
     }
+
+    // Capture the destination path from stdout to use it for future calls if needed, 
+    // but better to just deterministically know it.
+    // The script prints READY_PATH=...
+    // We can rely on the deterministic path: cache_dir/converted/SANITIZED_REF
+    
     emit_model_download_progress(ModelDownloadProgress {
         model_name: model_ref.to_string(),
         stage: "download".to_string(),
         downloaded_bytes: 0,
         total_bytes: None,
-        percent: Some(90.0),
-        done: false,
+        percent: Some(100.0),
+        done: true,
         error: None,
-        message: Some("Finalizing MLX model".to_string()),
+        message: Some("MLX Whisper model ready".to_string()),
     });
 
     Ok(())
 }
 
 fn run_mlx_transcription(model_ref: &str, cache_dir: &Path, wav_path: &Path) -> Result<String> {
+    let converted_path = converted_model_path(model_ref)?;
     let script = r#"
 import sys
-import json
-import mlx.nn as nn
-from parakeet_mlx.utils import from_config
-from huggingface_hub import hf_hub_download
+import mlx_whisper
 
-model_ref = sys.argv[1]
+model_path = sys.argv[1]
 wav_path = sys.argv[2]
-cache_dir = sys.argv[3]
 
-config_path = hf_hub_download(model_ref, "config.json", cache_dir=cache_dir)
-with open(config_path, "r") as f:
-    config = json.load(f)
-
-model = from_config(config)
-
-if "quantization" in config:
-    q_config = config["quantization"]
-    nn.quantize(model, bits=q_config["bits"], group_size=q_config["group_size"])
-
-weights_path = hf_hub_download(model_ref, "model.safetensors", cache_dir=cache_dir)
-model.load_weights(weights_path)
-
-result = model.transcribe(wav_path)
-
-text = getattr(result, "text", None)
-if text is None and isinstance(result, dict):
-    text = result.get("text")
-if text is None and hasattr(result, "__dict__"):
-    text = result.__dict__.get("text")
-if text is None:
-    text = str(result)
-print((text or "").strip())
+# Ensure we use the converted model path
+result = mlx_whisper.transcribe(wav_path, path_or_hf_repo=model_path)
+print(result["text"])
 "#;
 
     let python_bin = venv_python_bin(cache_dir);
@@ -306,11 +399,11 @@ print((text or "").strip())
         .args([
             "-c",
             script,
-            model_ref,
+            &converted_path.to_string_lossy(),
             &wav_path.to_string_lossy(),
-            &cache_dir.to_string_lossy(),
         ])
         .output()
+
         .map_err(|e| {
             SttError::TranscriptionFailed(format!(
                 "failed to start MLX Python runtime ({}): {e}",
@@ -326,13 +419,7 @@ print((text or "").strip())
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let text = stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .last()
-        .unwrap_or("")
-        .to_string();
+    let text = stdout.trim().to_string();
 
     Ok(text)
 }
@@ -343,7 +430,7 @@ fn ensure_python_available() -> Result<()> {
         .output()
         .map_err(|e| {
             SttError::ModelLoadError(format!(
-                "Python is required for MLX Parakeet runtime ({PYTHON_BIN} not found): {e}"
+                "Python is required for MLX runtime ({PYTHON_BIN} not found): {e}"
             ))
         })?;
     if output.status.success() {
@@ -351,18 +438,18 @@ fn ensure_python_available() -> Result<()> {
     }
 
     Err(SttError::ModelLoadError(
-        "Python is required for MLX Parakeet runtime but --version failed".into(),
+        "Python is required for MLX runtime but --version failed".into(),
     ))
 }
 
-fn ensure_parakeet_package_installed(cache_dir: &Path) -> Result<()> {
+fn ensure_whisper_package_installed(cache_dir: &Path) -> Result<()> {
     let python_bin = ensure_venv_ready(cache_dir)?;
     let check = Command::new(&python_bin)
-        .args(["-c", "import parakeet_mlx"])
+        .args(["-c", "import mlx_whisper"])
         .output()
         .map_err(|e| {
             SttError::ModelLoadError(format!(
-                "failed to probe parakeet-mlx in MLX runtime ({}): {e}",
+                "failed to probe mlx-whisper in MLX runtime ({}): {e}",
                 python_bin.display()
             ))
         })?;
@@ -371,11 +458,11 @@ fn ensure_parakeet_package_installed(cache_dir: &Path) -> Result<()> {
     }
 
     let install = Command::new(&python_bin)
-        .args(["-m", "pip", "install", "--upgrade", "parakeet-mlx"])
+        .args(["-m", "pip", "install", "--upgrade", "mlx-whisper", "huggingface_hub"])
         .output()
         .map_err(|e| {
             SttError::ModelLoadError(format!(
-                "failed to install parakeet-mlx in MLX runtime ({}): {e}",
+                "failed to install mlx-whisper in MLX runtime ({}): {e}",
                 python_bin.display()
             ))
         })?;
@@ -384,7 +471,7 @@ fn ensure_parakeet_package_installed(cache_dir: &Path) -> Result<()> {
     }
 
     Err(SttError::ModelLoadError(format!(
-        "failed to install parakeet-mlx: {}",
+        "failed to install mlx-whisper: {}",
         compact_python_error(&install.stderr)
     )))
 }
@@ -452,25 +539,15 @@ fn compact_python_error(stderr: &[u8]) -> String {
     }
 }
 
-fn marker_file_path(model_ref: &str) -> Result<PathBuf> {
+fn converted_model_path(model_ref: &str) -> Result<PathBuf> {
     Ok(mlx_cache_dir()?
-        .join(".downloaded")
-        .join(sanitize_model_ref(model_ref))
-        .join("ready"))
+        .join(format!("converted_{}", model_ref.replace('/', "_"))))
 }
 
-fn sanitize_model_ref(model_ref: &str) -> String {
-    model_ref
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect()
+fn marker_file_path(model_ref: &str) -> Result<PathBuf> {
+    Ok(converted_model_path(model_ref)?.join("ready"))
 }
+
 
 fn mlx_cache_dir() -> Result<PathBuf> {
     Ok(base_model_cache_dir()?.join("mlx"))
@@ -503,7 +580,7 @@ fn temp_wav_path() -> PathBuf {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     std::env::temp_dir().join(format!(
-        "openwispr-mlx-{}-{}.wav",
+        "openwispr-mlx-whisper-{}-{}.wav",
         std::process::id(),
         stamp
     ))

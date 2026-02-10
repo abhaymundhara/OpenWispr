@@ -417,6 +417,7 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "large-v3": "~3.1 GB",
   "sherpa-onnx/parakeet-tdt-0.6b-v3-int8": "~900 MB",
   "animaslabs/parakeet-tdt-0.6b-v3-mlx-8bit": "~600 MB",
+  "Oriserve/Whisper-Hindi2Hinglish-Apex": "~1.6 GB",
   "distil-whisper-small.en": "~400 MB",
   "distil-whisper-medium.en": "~800 MB",
   "distil-whisper-large-v3": "~1.5 GB",

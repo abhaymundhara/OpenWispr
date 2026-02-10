@@ -2,7 +2,8 @@ use serde::Serialize;
 use std::sync::Arc;
 use stt::{
     create_adapter, is_mlx_model_name, is_sherpa_model_name, set_model_download_progress_handler,
-    ModelDownloadProgress, SttConfig, MLX_PARAKEET_V2_MODEL, SHERPA_PARAKEET_INT8_MODEL,
+    ModelDownloadProgress, SttConfig, MLX_HINDI_HINGLISH_MODEL, MLX_PARAKEET_V2_MODEL,
+    SHERPA_PARAKEET_INT8_MODEL,
 };
 use tauri::Manager;
 
@@ -89,6 +90,15 @@ pub async fn list_models() -> Result<Vec<ModelInfo>, String> {
             downloaded: mlx_downloaded,
             can_download: true,
             note: Some("Parakeet MLX community model (8-bit)".to_string()),
+        });
+
+        let whisper_downloaded = adapter.is_model_available(MLX_HINDI_HINGLISH_MODEL).await;
+        result.push(ModelInfo {
+            name: MLX_HINDI_HINGLISH_MODEL.to_string(),
+            runtime: "mlx-whisper".to_string(),
+            downloaded: whisper_downloaded,
+            can_download: true,
+            note: Some("Hindi to Hinglish (Whisper Apex)".to_string()),
         });
     }
 
