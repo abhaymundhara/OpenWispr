@@ -415,8 +415,8 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "medium.en": "~1.5 GB",
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
-  "sherpa-onnx/parakeet-tdt-0.6b-v2-int8": "~600 MB",
-  "mlx-community/parakeet-tdt-0.6b-v2": "~1.2 GB",
+  "sherpa-onnx/parakeet-tdt-0.6b-v3-int8": "~600 MB",
+  "mlx-community/parakeet-tdt-0.6b-v3": "~1.2 GB",
   "distil-whisper-small.en": "~400 MB",
   "distil-whisper-medium.en": "~800 MB",
   "distil-whisper-large-v3": "~1.5 GB",
@@ -1991,7 +1991,7 @@ function Dashboard() {
                             "base.en",
                             "small",
                             "small.en",
-                            "sherpa-onnx/parakeet-tdt-0.6b-v2-int8",
+                            "sherpa-onnx/parakeet-tdt-0.6b-v3-int8",
                           ].includes(m.name),
                         )}
                         activeModel={activeModel}
