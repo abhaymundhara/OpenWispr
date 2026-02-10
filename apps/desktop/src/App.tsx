@@ -416,7 +416,7 @@ const MODEL_SIZE_HINTS: Record<string, string> = {
   "large-v3-turbo": "~1.6 GB",
   "large-v3": "~3.1 GB",
   "sherpa-onnx/parakeet-tdt-0.6b-v3-int8": "~600 MB",
-  "mlx-community/parakeet-tdt-0.6b-v3": "~1.2 GB",
+  "mlx-community/parakeet-tdt-0.6b-v3": "~2.3 GB",
   "distil-whisper-small.en": "~400 MB",
   "distil-whisper-medium.en": "~800 MB",
   "distil-whisper-large-v3": "~1.5 GB",
@@ -787,7 +787,7 @@ const LightTranscriptionSettings = ({
           )}
         <p className="mt-2 text-xs text-zinc-400">
           Whisper models are general-purpose. Parakeet (v3) models are multilingual, offer higher
-          accuracy and lower latency but require downloading ~600MB-1.2GB.
+          accuracy and lower latency but require downloading ~600MB-2.3GB.
         </p>
 
         {/* Downloaded Models List */}
