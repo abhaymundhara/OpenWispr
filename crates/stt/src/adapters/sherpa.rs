@@ -12,10 +12,10 @@ use tokio::sync::RwLock;
 
 use super::backend::{prepare_audio, TARGET_SAMPLE_RATE};
 
-const SHERPA_PARKEET_RELEASE_ARCHIVE: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2";
-const SHERPA_PARKEET_RELEASE_DIR: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8";
+const SHERPA_PARKEET_RELEASE_ARCHIVE: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2";
+const SHERPA_PARKEET_RELEASE_DIR: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
 const SHERPA_PARKEET_RELEASE_URL: &str =
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2";
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2";
 const SHERPA_REQUIRED_FILES: &[&str] = &[
     "encoder.int8.onnx",
     "decoder.int8.onnx",
@@ -187,7 +187,7 @@ fn resolve_model_root(config: &SttConfig) -> Result<PathBuf> {
 }
 
 fn ensure_model_downloaded() -> Result<PathBuf> {
-    let model_name = "sherpa-onnx/parakeet-tdt-0.6b-v2-int8".to_string();
+    let model_name = "sherpa-onnx/parakeet-tdt-0.6b-v3-int8".to_string();
     let root = sherpa_model_root_dir()?;
     if has_required_files(&root) {
         emit_model_download_progress(ModelDownloadProgress {
