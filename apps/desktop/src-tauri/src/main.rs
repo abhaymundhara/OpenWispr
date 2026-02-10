@@ -157,9 +157,6 @@ fn main() {
             // Initialize logging
             log_session_start();
 
-            // Show models window on startup
-            show_models_window(&handle);
-
             #[cfg(target_os = "macos")]
             {
                 fn_key_macos::start_fn_hold_listener(handle.clone());
