@@ -1994,6 +1994,7 @@ function Dashboard() {
                             "small.en",
                             "sherpa-onnx/parakeet-tdt-0.6b-v3-int8",
                             "animaslabs/parakeet-tdt-0.6b-v3-mlx-8bit",
+                            "Oriserve/Whisper-Hindi2Hinglish-Apex",
                           ].includes(m.name),
                         )}
                         activeModel={activeModel}
