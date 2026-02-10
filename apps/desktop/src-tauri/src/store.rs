@@ -28,19 +28,29 @@ impl Default for Analytics {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Snippet {
+    pub trigger: String,
+    pub expansion: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Settings {
     pub input_device: Option<String>,
     pub language: Option<String>,
+    pub active_transcription_model: String,
     pub local_transcription_enabled: bool,
     // LLM Settings
     pub llm_provider: Option<String>, // "ollama" or "system"
     pub ollama_base_url: Option<String>,
     pub ollama_model: Option<String>,
     pub system_llm_model: Option<String>, // For local SmolLM2 models
-    // Text Formatting Settings
+    // Text Formatting Settings (Core Features: Backtrack, Fillers, Lists, Punctuation)
     pub text_formatting_enabled: bool,
-    pub text_formatting_mode: String, // "quick", "standard", "smart"
+    pub mute_system_audio: bool,
+    pub personal_dictionary: Vec<String>,
+    pub snippets: Vec<Snippet>,
+    pub text_formatting_mode: String, // "smart", "rewrite", "grammar"
     pub shortcuts: ShortcutSettings,
 }
 
@@ -67,13 +77,17 @@ impl Default for Settings {
         Self {
             input_device: None,
             language: Some("en".to_string()),
+            active_transcription_model: "base".to_string(),
             local_transcription_enabled: true,
             llm_provider: Some("system".to_string()), // Default to system (local) provider
             ollama_base_url: Some("http://localhost:11434".to_string()),
             ollama_model: None,
             system_llm_model: Some("SmolLM2-135M-Instruct-Q4_K_M".to_string()), // Default to smallest model
-            text_formatting_enabled: false, // Disabled by default - STT models already clean up speech
-            text_formatting_mode: "standard".to_string(), // Balanced mode
+            text_formatting_enabled: true, // Enabled by default - professional formatting is a core feature
+            mute_system_audio: false,      // Disabled by default
+            personal_dictionary: Vec::new(),
+            snippets: Vec::new(),
+            text_formatting_mode: "smart".to_string(),
             shortcuts: ShortcutSettings::default(),
         }
     }
@@ -163,6 +177,10 @@ pub fn push_to_talk_shortcut() -> String {
 
 pub fn hands_free_toggle_shortcut() -> String {
     get_store().settings.shortcuts.hands_free_toggle
+}
+
+pub fn command_mode_shortcut() -> String {
+    get_store().settings.shortcuts.command_mode
 }
 
 fn store_path(app: &AppHandle) -> Option<PathBuf> {
@@ -330,13 +348,50 @@ pub fn set_system_llm_model(app: &AppHandle, model: String) {
 }
 
 #[tauri::command]
-pub fn set_formatting_settings(
-    app: AppHandle,
-    enabled: bool,
-    mode: String,
-) -> Result<(), String> {
+pub fn set_text_formatting_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut store = get_store();
     store.settings.text_formatting_enabled = enabled;
+    save_store(&app, &store);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_mute_system_audio_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut store = get_store();
+    store.settings.mute_system_audio = enabled;
+    save_store(&app, &store);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_personal_dictionary(app: AppHandle, words: Vec<String>) -> Result<(), String> {
+    let mut store = get_store();
+    store.settings.personal_dictionary = words;
+    save_store(&app, &store);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_personal_dictionary() -> Vec<String> {
+    get_store().settings.personal_dictionary
+}
+
+#[tauri::command]
+pub fn set_snippets(app: AppHandle, snippets: Vec<Snippet>) -> Result<(), String> {
+    let mut store = get_store();
+    store.settings.snippets = snippets;
+    save_store(&app, &store);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_snippets() -> Vec<Snippet> {
+    get_store().settings.snippets
+}
+
+#[tauri::command]
+pub fn set_text_formatting_mode(app: AppHandle, mode: String) -> Result<(), String> {
+    let mut store = get_store();
     store.settings.text_formatting_mode = mode;
     save_store(&app, &store);
     Ok(())
@@ -345,6 +400,42 @@ pub fn set_formatting_settings(
 #[tauri::command]
 pub fn get_settings() -> Settings {
     get_store().settings
+}
+
+#[tauri::command]
+pub fn export_settings_dialog(_app: AppHandle) -> Result<(), String> {
+    let store = get_store();
+    let json = serde_json::to_string_pretty(&store.settings).map_err(|e| e.to_string())?;
+
+    tauri::api::dialog::FileDialogBuilder::new()
+        .add_filter("JSON", &["json"])
+        .set_file_name("openwispr-settings.json")
+        .save_file(move |file_path| {
+            if let Some(path) = file_path {
+                let _ = fs::write(path, json);
+            }
+        });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn import_settings_dialog(app: AppHandle) -> Result<(), String> {
+    let app_handle = app.clone();
+    tauri::api::dialog::FileDialogBuilder::new()
+        .add_filter("JSON", &["json"])
+        .pick_file(move |file_path| {
+            if let Some(path) = file_path {
+                if let Ok(json) = fs::read_to_string(path) {
+                    if let Ok(settings) = serde_json::from_str::<Settings>(&json) {
+                        let mut store = get_store();
+                        store.settings = settings;
+                        save_store(&app_handle, &store);
+                        let _ = app_handle.emit_all("settings-imported", ());
+                    }
+                }
+            }
+        });
+    Ok(())
 }
 
 #[cfg(test)]

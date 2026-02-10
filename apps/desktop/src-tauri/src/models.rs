@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 use stt::{
     create_adapter, is_mlx_model_name, is_sherpa_model_name, set_model_download_progress_handler,
     ModelDownloadProgress, SttConfig, MLX_PARAKEET_V2_MODEL, SHERPA_PARAKEET_INT8_MODEL,
@@ -31,16 +31,8 @@ fn emit_model_download_progress_event(app: &tauri::AppHandle, payload: ModelDown
     let _ = app.emit_all("model-download-progress", payload);
 }
 
-fn active_model_store() -> &'static Mutex<String> {
-    static ACTIVE_MODEL: OnceLock<Mutex<String>> = OnceLock::new();
-    ACTIVE_MODEL.get_or_init(|| Mutex::new("base".to_string()))
-}
-
 pub fn active_model_value() -> String {
-    active_model_store()
-        .lock()
-        .map(|v| v.clone())
-        .unwrap_or_else(|_| "base".to_string())
+    crate::store::get_store().settings.active_transcription_model
 }
 
 #[tauri::command]
@@ -192,14 +184,11 @@ pub async fn download_model(app: tauri::AppHandle, model: String) -> Result<(), 
 
 #[tauri::command]
 pub fn get_active_model() -> Result<String, String> {
-    active_model_store()
-        .lock()
-        .map(|v| v.clone())
-        .map_err(|_| "failed to read active model".to_string())
+    Ok(active_model_value())
 }
 
 #[tauri::command]
-pub async fn set_active_model(model: String) -> Result<(), String> {
+pub async fn set_active_model(app: tauri::AppHandle, model: String) -> Result<(), String> {
     let adapter = create_adapter().map_err(|e| e.to_string())?;
     let downloaded = adapter.is_model_available(&model).await;
     if !downloaded {
@@ -211,13 +200,53 @@ pub async fn set_active_model(model: String) -> Result<(), String> {
         return Err("MLX models are only supported on macOS".to_string());
     }
 
-    if is_sherpa_model_name(&model) || is_mlx_model_name(&model) {
-        // Valid special runtimes with download support.
+    let mut store = crate::store::get_store();
+    store.settings.active_transcription_model = model;
+    crate::store::save_store(&app, &store);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_model(model: String) -> Result<(), String> {
+    // Prevent deleting the active model
+    let active = active_model_value();
+    if active == model {
+        return Err("Cannot delete the currently active model. Please select a different model first.".to_string());
     }
 
-    let mut guard = active_model_store()
-        .lock()
-        .map_err(|_| "failed to set active model".to_string())?;
-    *guard = model;
+    let adapter = create_adapter().map_err(|e| e.to_string())?;
+    
+    // Check if model exists
+    let downloaded = adapter.is_model_available(&model).await;
+    if !downloaded {
+        return Err("Model is not downloaded".to_string());
+    }
+
+    // Get model cache directory
+    let model_dir = stt::get_model_cache_dir().map_err(|e| e.to_string())?;
+    
+    // Determine the model file path based on model type
+    let model_path = if is_sherpa_model_name(&model) {
+        // Sherpa models are in a subdirectory
+        model_dir.join(model)
+    } else if is_mlx_model_name(&model) {
+        // MLX models are in a subdirectory
+        model_dir.join(model)
+    } else {
+        // Whisper models are .bin files
+        model_dir.join(format!("ggml-{}.bin", model))
+    };
+
+    // Delete the model file(s)
+    if model_path.is_dir() {
+        std::fs::remove_dir_all(&model_path)
+            .map_err(|e| format!("Failed to delete model directory: {}", e))?;
+    } else if model_path.is_file() {
+        std::fs::remove_file(&model_path)
+            .map_err(|e| format!("Failed to delete model file: {}", e))?;
+    } else {
+        return Err("Model file not found".to_string());
+    }
+
     Ok(())
 }

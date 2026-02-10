@@ -26,6 +26,7 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.33.0",
     "lucide-react": "^0.563.0",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0"
   }
 }

@@ -27,6 +27,7 @@ struct FnHoldState {
     keycode_tokens: HashMap<i64, String>,
     is_push_active: bool,
     is_hands_free: bool,
+    is_command: bool,
     is_recording_active: bool,
     hold_emitted: bool,
     hands_free_combo_prev_active: bool,
@@ -40,20 +41,34 @@ fn fallback_hands_free_spec() -> ShortcutSpec {
     crate::store::parse_shortcut("fn+space").unwrap_or_default()
 }
 
-fn load_shortcuts() -> (ShortcutSpec, ShortcutSpec) {
+fn fallback_command_mode_spec() -> ShortcutSpec {
+    crate::store::parse_shortcut("fn+ctrl").unwrap_or_default()
+}
+
+fn load_shortcuts() -> (ShortcutSpec, ShortcutSpec, ShortcutSpec) {
     let push = crate::store::parse_shortcut(&crate::store::push_to_talk_shortcut())
         .unwrap_or_else(|_| fallback_push_spec());
     let hands_free = crate::store::parse_shortcut(&crate::store::hands_free_toggle_shortcut())
         .unwrap_or_else(|_| fallback_hands_free_spec());
-    (push, hands_free)
+    let command = crate::store::parse_shortcut(&crate::store::command_mode_shortcut())
+        .unwrap_or_else(|_| fallback_command_mode_spec());
+    (push, hands_free, command)
 }
 
-fn start_capture(state: &FnHoldState) -> Result<(), String> {
+fn start_capture(state: &FnHoldState) {
     let capture = state.app.state::<AudioCapture>().inner().clone();
     let app_handle = state.app.clone();
+    let is_command = state.is_command;
     audio::remember_active_paste_target();
     crate::show_main_overlay_window(&state.app);
-    audio::start_recording_for_capture(&capture, app_handle)
+    let handle = tauri::async_runtime::spawn(async move {
+        if let Err(err) = audio::start_recording_for_capture(&capture, app_handle, is_command).await {
+            eprintln!("Failed to start recording: {}", err);
+        }
+    });
+    if let Ok(mut task) = TASK_HANDLE.lock() {
+        *task = Some(handle);
+    }
 }
 
 fn stop_capture(state: &FnHoldState) {
@@ -70,20 +85,14 @@ fn stop_capture(state: &FnHoldState) {
 }
 
 fn sync_recording(state: &mut FnHoldState) {
-    let should_record = state.is_hands_free || state.is_push_active;
+    let should_record = state.is_hands_free || state.is_push_active || state.is_command;
     if should_record == state.is_recording_active {
         return;
     }
 
     if should_record {
-        match start_capture(state) {
-            Ok(_) => state.is_recording_active = true,
-            Err(err) if err == "Already recording" => state.is_recording_active = true,
-            Err(err) => {
-                eprintln!("Failed to start recording: {}", err);
-                state.is_recording_active = false;
-            }
-        }
+        start_capture(state);
+        state.is_recording_active = true;
     } else {
         stop_capture(state);
         state.is_recording_active = false;
@@ -91,7 +100,7 @@ fn sync_recording(state: &mut FnHoldState) {
 }
 
 fn sync_hold_signal(state: &mut FnHoldState) {
-    let should_emit_hold = state.is_hands_free || state.is_push_active;
+    let should_emit_hold = state.is_hands_free || state.is_push_active || state.is_command;
     if should_emit_hold != state.hold_emitted {
         state.hold_emitted = should_emit_hold;
         let _ = state.app.emit_all("fn-hold", should_emit_hold);
@@ -229,7 +238,7 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
         }
     }
 
-    let (push_shortcut, hands_free_shortcut) = load_shortcuts();
+    let (push_shortcut, hands_free_shortcut, command_shortcut) = load_shortcuts();
     let hands_combo_active = is_shortcut_active(&hands_free_shortcut, state);
     if hands_combo_active && !state.hands_free_combo_prev_active {
         state.is_hands_free = !state.is_hands_free;
@@ -241,7 +250,13 @@ unsafe extern "C-unwind" fn fn_event_tap_callback(
     }
     state.hands_free_combo_prev_active = hands_combo_active;
 
-    state.is_push_active = if state.is_hands_free {
+    state.is_command = if state.is_hands_free {
+        false
+    } else {
+        is_shortcut_active(&command_shortcut, state)
+    };
+
+    state.is_push_active = if state.is_hands_free || state.is_command {
         false
     } else {
         is_shortcut_active(&push_shortcut, state)
@@ -266,6 +281,7 @@ pub fn start_fn_hold_listener(app: AppHandle<Wry>) {
             keycode_tokens: HashMap::new(),
             is_push_active: false,
             is_hands_free: false,
+            is_command: false,
             is_recording_active: false,
             hold_emitted: false,
             hands_free_combo_prev_active: false,

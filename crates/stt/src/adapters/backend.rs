@@ -496,6 +496,12 @@ fn model_cache_dir() -> Result<PathBuf> {
     ))
 }
 
+/// Public wrapper to get model cache directory
+pub fn get_model_cache_dir() -> Result<PathBuf> {
+    model_cache_dir()
+}
+
+
 fn download_model(model_name: &str, output_path: &Path) -> Result<()> {
     let filename = model_filename(model_name);
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");

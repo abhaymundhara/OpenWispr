@@ -172,3 +172,8 @@ pub fn create_adapter() -> Result<Box<dyn SttAdapter>> {
         Err(SttError::UnsupportedPlatform)
     }
 }
+
+/// Get the model cache directory path
+pub fn get_model_cache_dir() -> Result<PathBuf> {
+    adapters::backend::get_model_cache_dir()
+}

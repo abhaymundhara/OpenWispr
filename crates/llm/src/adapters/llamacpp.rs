@@ -51,7 +51,7 @@ impl LlamaCppAdapter {
             .as_ref()
             .ok_or_else(|| LlmError::ModelLoadError("Backend not initialized".to_string()))?;
 
-        let config = self
+        let _config = self
             .config
             .as_ref()
             .ok_or_else(|| LlmError::ConfigError("Config not set".to_string()))?;
