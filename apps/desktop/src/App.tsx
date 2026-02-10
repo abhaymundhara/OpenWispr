@@ -786,8 +786,8 @@ const LightTranscriptionSettings = ({
             </p>
           )}
         <p className="mt-2 text-xs text-zinc-400">
-          Whisper models are general-purpose. Parakeet models offer higher
-          accuracy but may be larger.
+          Whisper models are general-purpose. Parakeet (v3) models are multilingual, offer higher
+          accuracy and lower latency but require downloading ~600MB-1.2GB.
         </p>
 
         {/* Downloaded Models List */}
